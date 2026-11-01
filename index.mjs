@@ -221,14 +221,11 @@ function resolveConfigDir(input) {
 }
 
 /**
- * 宿主只加载带钩子的插件，所以这里留两个不改任何东西的钩子：
- * config 让 magpie 启动时就载入本模块，chat.headers 保持一个空实现。
+ * 不导出任何钩子：这个插件只是面板，不提供供应商、也不碰请求。
+ * magpie 仍会把模块载入插件宿主，这里只负责启动快照轮询。
  */
 export default async function quotaGlance(input) {
   configDir = resolveConfigDir(input)
   start()
-  return {
-    config: async () => {},
-    'chat.headers': async () => {},
-  }
+  return {}
 }
