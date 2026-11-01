@@ -1,0 +1,292 @@
+:root {
+  --q-bg: var(--magpie-bg, #ffffff);
+  --q-card: var(--magpie-card, #f6f6f7);
+  --q-fg: var(--magpie-fg, #16181d);
+  --q-muted: var(--magpie-muted, #7b8189);
+  --q-line: var(--magpie-line, rgba(0, 0, 0, 0.1));
+  --q-accent: var(--magpie-accent, #3c6df0);
+  --q-warn: #d98324;
+  --q-warn-soft: rgba(217, 131, 36, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2px 0 10px;
+  background: transparent;
+  color: var(--q-fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.hint {
+  margin: 6px 2px;
+  color: var(--q-muted);
+}
+
+.hint.error {
+  color: var(--q-warn);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0 10px;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--q-accent);
+  background: var(--magpie-accent-soft, rgba(60, 109, 240, 0.12));
+  flex: none;
+}
+
+.mark svg {
+  display: block;
+}
+
+.head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.head .sub {
+  color: var(--q-muted);
+  font-size: 12px;
+}
+
+.head .spacer {
+  flex: 1;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--q-line);
+  background: var(--q-card);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chip.warn {
+  border-color: transparent;
+  background: var(--q-warn-soft);
+  color: var(--q-warn);
+}
+
+.chip b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.total {
+  border: 1px solid var(--q-line);
+  border-radius: 10px;
+  background: var(--q-card);
+  padding: 8px 10px;
+}
+
+.total .k {
+  color: var(--q-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.total .v {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.total .v small {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--q-muted);
+  margin-left: 4px;
+}
+
+.total.warn .v {
+  color: var(--q-warn);
+}
+
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider {
+  border: 1px solid var(--q-line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--q-bg);
+}
+
+.provider .top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.provider .name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.provider .meta {
+  color: var(--q-muted);
+  font-size: 12px;
+}
+
+.provider .grow {
+  flex: 1;
+}
+
+.provider .nums {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.provider .nums .kv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--q-muted);
+  font-size: 12px;
+}
+
+.provider .nums .kv b {
+  color: var(--q-fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.provider .nums .kv.pct b {
+  color: var(--q-accent);
+}
+
+.provider .nums .kv.exp b {
+  color: var(--q-warn);
+}
+
+.bar {
+  position: relative;
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--q-line);
+  overflow: hidden;
+}
+
+.bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: var(--q-accent);
+}
+
+details {
+  margin-top: 8px;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--q-muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  content: "▸ ";
+  font-size: 10px;
+}
+
+details[open] summary::before {
+  content: "▾ ";
+}
+
+.accounts {
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: var(--q-card);
+  font-variant-numeric: tabular-nums;
+}
+
+.account .who {
+  font-weight: 500;
+}
+
+.account .tag {
+  color: var(--q-muted);
+}
+
+.account .grow {
+  flex: 1;
+}
+
+.account .val {
+  color: var(--q-muted);
+}
+
+.account .val b {
+  color: var(--q-fg);
+  font-weight: 600;
+}
+
+.account .val.exp b {
+  color: var(--q-warn);
+}
+
+.account.unknown .val {
+  color: var(--q-muted);
+  font-style: italic;
+}
+
+.empty {
+  margin: 10px 2px;
+  color: var(--q-muted);
+}
