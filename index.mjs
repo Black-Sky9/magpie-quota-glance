@@ -23,6 +23,7 @@ const DAY = 86_400_000
 let configDir = ''
 let timer = null
 let lastSignature = ''
+let latest = null
 
 const toNumber = (value) => {
   const n = typeof value === 'number' ? value : Number(value)
@@ -194,6 +195,7 @@ async function publish() {
 
   const snapshot = buildSnapshot(raw, Date.now())
   const signature = JSON.stringify(snapshot)
+  latest = snapshot
   if (signature === lastSignature) return
 
   const body = `self.__magpieQuota && self.__magpieQuota(${signature});\n`
@@ -221,11 +223,25 @@ function resolveConfigDir(input) {
 }
 
 /**
- * 不导出任何钩子：这个插件只是面板，不提供供应商、也不碰请求。
- * magpie 仍会把模块载入插件宿主，这里只负责启动快照轮询。
+ * 只提供一个工具钩子：面板要的实时快照靠本模块的轮询产生，而这个模块只要被
+ * 载入宿主就会跑起来。没有工具时 magpie 会把本插件当成「没有登录方式的供应商
+ * 插件」，插件列表里多出一行提示；给出工具后它被认作「面板 + 工具」，不再误判。
+ * 这个工具本身也有用：agent 可以直接问当前还有多少积分、哪些快到期。
  */
 export default async function quotaGlance(input) {
   configDir = resolveConfigDir(input)
   start()
-  return {}
+  return {
+    tool: {
+      quota_snapshot: {
+        description:
+          '当前各供应商的积分快照：每个供应商下所有账号的积分总量、已用积分与消耗百分比、剩余积分，以及 3 天内到期的积分总量与到期时刻。',
+        args: { type: 'object', properties: {} },
+        execute: async () => {
+          if (!latest) return '还没有读到积分快照：magpie 的 quotas.json 尚未生成，稍后再试。'
+          return JSON.stringify(latest, null, 2)
+        },
+      },
+    },
+  }
 }
