@@ -9,6 +9,10 @@
   let attempts = 0
   let renderedKey = ''
   const opened = new Set()
+  const excluded = new Set() // 被排除在合计之外的供应商 id，存在插件自己的 options 里
+  let pickerOpen = false
+  let savedAt = 0
+  let saveTimer = 0
 
   const fmt = (n) => (Number.isFinite(n) ? n : 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 })
 
@@ -48,6 +52,46 @@
     return wrap
   }
 
+  /** 只对纳入合计的供应商求和 */
+  const sumOf = (list) => {
+    const sum = { providers: list.length, accounts: 0, known: 0, limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0 }
+    for (const p of list) {
+      sum.accounts += p.accounts
+      sum.known += p.known ?? p.accounts
+      sum.limit += p.limit
+      sum.used += p.used
+      sum.remain += p.remain
+      sum.expiring += p.expiring
+      if (p.expiresAt) sum.expiresAt = sum.expiresAt ? Math.min(sum.expiresAt, p.expiresAt) : p.expiresAt
+    }
+    sum.usedPct = sum.limit > 0 ? (sum.used / sum.limit) * 100 : 0
+    return sum
+  }
+
+  // options 每秒最多写一次，连续勾选时合并成一次
+  function saveExcluded() {
+    const list = [...excluded]
+    const now = Date.now()
+    clearTimeout(saveTimer)
+    const wait = Math.max(0, 1000 - (now - savedAt))
+    saveTimer = setTimeout(() => {
+      savedAt = Date.now()
+      try {
+        magpie.options?.set?.({ excluded: list })
+      } catch {
+        /* 写不进去也不影响本次显示 */
+      }
+    }, wait)
+  }
+
+  function toggleProvider(id, include) {
+    if (include) excluded.delete(id)
+    else excluded.add(id)
+    renderedKey = ''
+    saveExcluded()
+    render()
+  }
+
   function accountRow(item) {
     const row = el('div', `account${item.known ? '' : ' unknown'}`)
     const who = el('span', 'who', item.user || item.key)
@@ -76,7 +120,7 @@
     return row
   }
 
-  function providerCard(provider) {
+  function providerCard(provider, allowExclude) {
     const card = el('div', 'provider')
     const top = el('div', 'top')
     top.append(el('span', 'name', provider.name))
@@ -92,6 +136,14 @@
       const chip = el('span', 'chip warn')
       chip.append(el('span', '', '3 天内到期'), el('b', '', fmt(provider.expiring)))
       top.append(chip)
+    }
+
+    if (allowExclude) {
+      const drop = el('button', 'exclude', '排除')
+      drop.type = 'button'
+      drop.title = '把这个供应商从合计里去掉'
+      drop.addEventListener('click', () => toggleProvider(provider.id, false))
+      top.append(drop)
     }
     card.append(top)
 
@@ -126,6 +178,49 @@
     return card
   }
 
+  /** 供应商选择框：列出当前识别到的所有供应商，勾选决定是否纳入合计 */
+  function pickerBox(providers) {
+    const box = el('div', 'picker')
+    const head = el('div', 'picker-head')
+    head.append(el('span', 'label', '纳入合计的供应商'))
+    head.append(el('span', 'grow'))
+
+    const all = el('button', 'mini', '全选')
+    all.type = 'button'
+    all.addEventListener('click', () => {
+      excluded.clear()
+      renderedKey = ''
+      saveExcluded()
+      render()
+    })
+
+    const none = el('button', 'mini', '全不选')
+    none.type = 'button'
+    none.addEventListener('click', () => {
+      for (const p of providers) excluded.add(p.id)
+      renderedKey = ''
+      saveExcluded()
+      render()
+    })
+
+    head.append(all, none)
+    box.append(head)
+
+    for (const p of providers) {
+      const row = el('label', 'picker-row')
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.checked = !excluded.has(p.id)
+      cb.addEventListener('change', () => toggleProvider(p.id, cb.checked))
+      row.append(cb)
+      row.append(el('span', 'pname', p.name))
+      row.append(el('span', 'pmeta', `${p.accounts} 个账号 · 总量 ${fmt(p.limit)} · 已用 ${fmt(p.used)}`))
+      box.append(row)
+    }
+
+    return box
+  }
+
   function render() {
     root.textContent = ''
 
@@ -139,8 +234,9 @@
     }
 
     const data = snapshot
-    const providers = onlyProvider ? data.providers.filter((p) => p.id === onlyProvider) : data.providers
-    const scope = onlyProvider && providers.length === 1 ? providers[0] : data.total
+    const all = onlyProvider ? data.providers.filter((p) => p.id === onlyProvider) : data.providers
+    const providers = all.filter((p) => onlyProvider || !excluded.has(p.id))
+    const scope = providers.length ? sumOf(providers) : sumOf([])
 
     const head = el('div', 'head')
     head.append(mark(), el('h2', '', '积分总览'))
@@ -148,13 +244,26 @@
     if (onlyProvider) {
       sub.push(`${providers.length ? providers[0].name : onlyProvider} · ${scope.accounts} 个账号`)
     } else {
-      sub.push(`${data.total.providers} 个供应商 / ${data.total.accounts} 个账号`)
+      sub.push(`${providers.length} 个供应商 / ${scope.accounts} 个账号`)
+      if (excluded.size) sub.push(`已排除 ${excluded.size} 个`)
     }
     if (scope.known < scope.accounts) sub.push(`${scope.accounts - scope.known} 个额度不可读`)
     if (data.at) sub.push(`配额更新于 ${clock(data.at)}`)
     head.append(el('span', 'sub', sub.join(' · ')))
     head.append(el('span', 'spacer'))
+
+    if (!onlyProvider && data.providers.length) {
+      const pick = el('button', `pick${pickerOpen ? ' on' : ''}`, pickerOpen ? '收起选择' : '选择供应商')
+      pick.type = 'button'
+      pick.addEventListener('click', () => {
+        pickerOpen = !pickerOpen
+        render()
+      })
+      head.append(pick)
+    }
     root.append(head)
+
+    if (pickerOpen && !onlyProvider) root.append(pickerBox(data.providers))
 
     const totals = el('div', 'totals')
     const addTotal = (label, value, extra, warn) => {
@@ -171,13 +280,18 @@
     addTotal(`${data.days} 天内到期`, fmt(scope.expiring), clock(scope.expiresAt), scope.expiring > 0)
     root.append(totals)
 
-    if (!providers.length) {
+    if (!all.length) {
       root.append(el('p', 'empty', onlyProvider ? '这个供应商还没有可读的积分额度。' : '没有可读的积分额度。'))
       return
     }
 
+    if (!providers.length) {
+      root.append(el('p', 'empty', '所有供应商都被排除在合计之外，用右上角的「选择供应商」把它们放回来。'))
+      return
+    }
+
     const list = el('div', 'providers')
-    for (const provider of providers) list.append(providerCard(provider))
+    for (const provider of providers) list.append(providerCard(provider, !onlyProvider))
     root.append(list)
   }
 
@@ -228,6 +342,17 @@
     }
 
     onlyProvider = magpie.context?.provider?.id || ''
+
+    // 用户在「选择供应商」里排除掉的那些，存在插件自己的 options 里
+    try {
+      const opts = await magpie.options?.get?.()
+      if (Array.isArray(opts?.excluded)) {
+        for (const id of opts.excluded) if (typeof id === 'string' && id) excluded.add(id)
+      }
+    } catch {
+      /* 读不到就用全选 */
+    }
+
     render()
     await refresh()
 

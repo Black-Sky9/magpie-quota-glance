@@ -130,6 +130,10 @@ function buildSnapshot(raw, now) {
     account.known = account.limit > 0
     if (account.readAt > latestReadAt) latestReadAt = account.readAt
 
+    // 额度一个都读不到的账号（已退登、被删、401、无套餐）不进快照：否则供应商删掉了，
+    // quotas.json 里的旧记录还会让它一直挂在面板上
+    if (!account.known) continue
+
     let provider = providers.get(id)
     if (!provider) {
       provider = { id, name: String(quota.name || id), accounts: [] }

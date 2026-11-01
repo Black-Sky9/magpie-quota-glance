@@ -71,6 +71,115 @@ body {
   flex: 1;
 }
 
+/* ---------- 供应商选择 ---------- */
+
+.pick {
+  border: 1px solid var(--q-line);
+  background: var(--q-card);
+  color: var(--q-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pick:hover {
+  border-color: var(--q-accent);
+  color: var(--q-accent);
+}
+
+.pick.on {
+  border-color: var(--q-accent);
+  background: var(--magpie-accent-soft, rgba(60, 109, 240, 0.12));
+  color: var(--q-accent);
+}
+
+.picker {
+  border: 1px solid var(--q-line);
+  border-radius: 12px;
+  background: var(--q-card);
+  padding: 8px 10px 10px;
+  margin: 0 0 10px;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.picker-head .label {
+  color: var(--q-muted);
+  font-size: 12px;
+}
+
+.picker-head .grow {
+  flex: 1;
+}
+
+.mini {
+  border: 0;
+  background: transparent;
+  color: var(--q-accent);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mini:hover {
+  background: var(--magpie-accent-soft, rgba(60, 109, 240, 0.12));
+}
+
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.picker-row:hover {
+  background: var(--q-bg);
+}
+
+.picker-row input {
+  accent-color: var(--q-accent);
+  margin: 0;
+}
+
+.picker-row .pname {
+  font-weight: 600;
+}
+
+.picker-row .pmeta {
+  color: var(--q-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.exclude {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--q-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.exclude:hover {
+  border-color: var(--q-line);
+  color: var(--q-warn);
+  background: var(--q-warn-soft);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
