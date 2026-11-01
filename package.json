@@ -1,7 +1,7 @@
 {
   "name": "magpie-quota-glance",
   "version": "0.1.1",
-  "description": "Credits at a glance in magpie's Usage › Overview: every account's credits under each provider, the share spent, and what lapses within the next 3 days",
+  "description": "magpie 插件：在「用量 › 概览」按供应商汇总所有账号的积分总量、消耗百分比与 3 天内到期积分",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",

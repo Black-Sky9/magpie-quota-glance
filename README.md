@@ -1,90 +1,81 @@
 # magpie-quota-glance
 
-A magpie plugin that puts every account's credits in one place.
+一个 magpie 插件：把每个账号的积分收在一处。
 
-It adds a panel to **Usage › Overview** that aggregates, per provider, all of that
-provider's accounts: total credits, credits spent with the spent share, credits left,
-and **how much lapses within the next 3 days** (with the exact lapse time). The same
-panel also appears in each provider's editor, scoped to that provider.
+它在「用量 › 概览」底部加一块面板，按供应商汇总该供应商下**所有账号**的积分——积分总量、已用积分与消耗百分比、剩余积分，以及**最近 3 天内到期**的积分（带到期时刻）。同一个面板也会出现在每个供应商的编辑页里，只显示该供应商。
 
-Ships as a page-less panel plugin: it never touches your requests, never calls a vendor
-API, and reads nothing from magpie (`magpie plugin` reports `reads nothing`).
+这是一个纯面板插件：不碰你的请求、不调用厂商接口、不从 magpie 读取任何数据（`magpie plugin` 显示 `reads nothing`）。
 
-![The credits panel at the end of Usage › Overview](docs/screenshot.png)
+![用量 › 概览底部的积分面板](docs/screenshot.png)
 
-<sub>Screenshot taken with made-up accounts and numbers.</sub>
+<sub>截图使用虚构的账号与数字。</sub>
 
-## What the panel shows
+## 面板显示什么
 
-| Row | Meaning |
+| 行 | 含义 |
 | --- | --- |
-| 积分总量 | Sum of each account's credit window `limit` under the provider |
-| 已用 / 消耗 | Sum of used credits (`amount`) and its share of the total |
-| 剩余 | Total minus spent |
-| 3 天内到期 | Credits whose batch lapses within 72 h (`runsOutAt`), plus windows that reset within 72 h |
+| 积分总量 | 该供应商下各账号计分窗口 `limit` 之和 |
+| 已用 / 消耗 | 窗口 `amount`（已用积分）之和，及其占总量比例 |
+| 剩余 | 总量减已用 |
+| 3 天内到期 | 批次在 72 小时内作废的积分（`runsOutAt`），以及 72 小时内重置的窗口 |
 
-Per account: plan, spent / limit, spent share, per-window bars, reset time, and the
-lapsing amount with its timestamp. Accounts whose quota cannot be read (401, no plan,
-not subscribed) are listed as unreadable instead of being counted as zero.
+每个账号还会显示：套餐、已用 / 上限、消耗百分比、逐窗口进度条、重置时间、到期积分与时刻。额度读不到的账号（401、未订阅、无套餐）会标为「额度暂不可读」，而不是被当成 0 计入合计。
 
-## Install
+## 安装
+
+从本地目录（解压后）：
 
 ```bash
-magpie plugin add "<path to this folder>"
-magpie plugin            # expect: panels  Credits on usage, Credits on provider (reads nothing)
+magpie plugin add "<该文件夹的绝对路径>"
+magpie plugin            # 预期输出：panels  Credits on usage, Credits on provider (reads nothing)
 ```
 
-Or straight from GitHub:
+或直接从 GitHub 拉：
 
 ```bash
 magpie plugin add github:Black-Sky9/magpie-quota-glance
 ```
 
-Then open **Usage › Overview** and scroll to the bottom. See [INSTALL.md](INSTALL.md)
-for the detailed steps, uninstall, and troubleshooting (中文).
+装好后打开「用量 › 概览」，滚到底部即是面板。详细步骤、卸载与排错见 [INSTALL.md](INSTALL.md)。
 
-## How it works
+## 工作原理
 
-magpie's plugin pages run in a sandbox that can only read `usage:summary` and
-`providers:list`, with `connect-src 'none'` — so a page cannot see per-account credits.
-The plugin host (Bun, `index.mjs`) therefore reads magpie's own quota cache
-(`~/.config/magpie/quotas.json`, the same `auth.usage` results the built-in cards draw)
-and writes an aggregated snapshot to `panel/live.js`; the panel picks it up with
-`<script src="live.js?v=…">`, which the sandbox does allow.
+magpie 的插件页面跑在沙盒里，只能读 `usage:summary` 与 `providers:list`，且 CSP 是 `connect-src 'none'`——所以页面拿不到按账号的积分。因此由插件宿主（Bun，`index.mjs`）读取 magpie 自己的配额缓存（`~/.config/magpie/quotas.json`，与内置卡片用的是同一份 `auth.usage` 结果），算好聚合快照后写入 `panel/live.js`；面板用沙盒允许的 `<script src="live.js?v=…">` 把它取回来。
 
 ```
-quotas.json ──► index.mjs (aggregate) ──► panel/live.js ──► panel (every 3 s)
+quotas.json ──► index.mjs（聚合）──► panel/live.js ──► 面板（每 3 秒）
 ```
 
-Aggregation rules:
+聚合口径：
 
-- Only total windows count: windows marked `aside` (or `spans[i].aside`) are breakdowns
-  of the same credits (e.g. CodeArts' 基础积分包 / 赠送积分包) and are skipped.
-- `used` is the percentage, `amount` is the spent credits, `limit` is the cap.
-- Lapsing credits use `runsOutAt` (when the batch is written off) first, then
-  `resetsAt` (period reset); `min(runsOut, remaining)` is used when both exist.
-- `runsOutAt` alone is not treated as an expiry prediction — only as a batch lapse.
+- 只统计总额窗口；带 `aside` 标记的（或 `spans[i].aside`）是同一笔积分的拆分（例如 CodeArts 的「基础积分包」「赠送积分包」），跳过不重复计入。
+- `used` 是百分比，`amount` 是已用积分，`limit` 是上限。
+- 到期积分优先取 `runsOutAt`（批次作废时刻），其次取 `resetsAt`（周期重置）；两者都有时取 `min(runsOut, 剩余)`。
+- `runsOutAt` 不是「按当前速度会用完」的预测，只作为批次作废时刻使用。
 
-## Limitations
+## 隐私
 
-- The panel can only be appended to the end of the built-in Overview: magpie's plugin
-  UI exposes `panels` slots only at the end of a page (or the provider editor), and
-  `page.replaces` would take over the whole Usage page and drop the request ledger and
-  the context pane. This plugin deliberately stays a panel.
-- Freshness follows magpie's own quota refresh interval (minutes), not real time.
+- `magpie plugin` 显示 `reads nothing`：面板没有声明任何读取权限，也不会去请求厂商接口。
+- 快照里的账号只用 `sha256(账号 ID)` 的前 8 位，不含真实账号 ID。
+- 运行时生成的 `panel/live.js`（含你本地的额度数字）已被 `.gitignore` 排除，也不会打进 npm 包。
 
-## Files
+## 限制
+
+- 面板只能追加在内置概览的末尾：magpie 的插件 UI 只在页面末尾（或供应商编辑页）提供 `panels` 插槽；用 `page.replaces` 接管整个用量页会顺带丢掉请求账本和上下文页，所以本插件刻意保持为面板。
+- 数据新鲜度跟随 magpie 自身的配额刷新间隔（分钟级），不是实时。
+
+## 文件
 
 ```
-package.json      manifest (magpie.panels, magpie.icon)
-index.mjs         host side: read quotas.json, aggregate, write panel/live.js
-panel/quota.html  panel page (sandboxed frame)
-panel/quota.css   panel styles, themed through --magpie-* tokens
-panel/quota.js    panel renderer; the title mark is inline SVG
-icon.svg          plugin icon source (embedded as a data URI in the manifest)
-panel/live.js     generated at runtime, not committed
+package.json      插件清单（magpie.panels、magpie.icon）
+index.mjs         宿主侧：读 quotas.json、聚合、写 panel/live.js
+panel/quota.html  面板页面（沙盒 frame）
+panel/quota.css   面板样式，走 --magpie-* 主题变量
+panel/quota.js    面板渲染；标题图标为内联矢量
+icon.svg          插件图标源文件（清单里以 data URI 内嵌）
+panel/live.js     运行时生成，不提交
 ```
 
-## License
+## 许可
 
 MIT
