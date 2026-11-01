@@ -54,14 +54,21 @@
 
   /** 只对纳入合计的供应商求和 */
   const sumOf = (list) => {
-    const sum = { providers: list.length, accounts: 0, known: 0, limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0 }
+    const sum = {
+      providers: list.length, accounts: 0, known: 0, balanceOnly: 0, percentOnly: 0,
+      limit: 0, used: 0, remain: 0, balance: 0, expiring: 0, expiresAt: 0, peakPct: 0,
+    }
     for (const p of list) {
       sum.accounts += p.accounts
       sum.known += p.known ?? p.accounts
+      sum.balanceOnly += p.balanceOnly ?? 0
+      sum.percentOnly += p.percentOnly ?? 0
       sum.limit += p.limit
       sum.used += p.used
       sum.remain += p.remain
+      sum.balance += p.balance ?? 0
       sum.expiring += p.expiring
+      if (p.peakPct > sum.peakPct) sum.peakPct = p.peakPct
       if (p.expiresAt) sum.expiresAt = sum.expiresAt ? Math.min(sum.expiresAt, p.expiresAt) : p.expiresAt
     }
     sum.usedPct = sum.limit > 0 ? (sum.used / sum.limit) * 100 : 0
@@ -93,23 +100,31 @@
   }
 
   function accountRow(item) {
-    const row = el('div', `account${item.known ? '' : ' unknown'}`)
+    const row = el('div', 'account')
     const who = el('span', 'who', item.user || item.key)
     row.append(who)
     if (item.plan) row.append(el('span', 'tag', item.plan))
+    row.append(el('span', 'grow'))
 
-    if (!item.known) {
-      row.append(el('span', 'grow'), el('span', 'val', '额度暂不可读'))
-      return row
+    if (item.known) {
+      const val = el('span', 'val')
+      val.append(el('span', '', '已用 '), el('b', '', fmt(item.used)), el('span', '', ` / ${fmt(item.limit)} · ${pct(item.usedPct)}`))
+      row.append(val)
+
+      const remain = el('span', 'val')
+      remain.append(el('span', '', '剩余 '), el('b', '', fmt(item.remain)))
+      row.append(remain)
+    } else if (item.hasBalance) {
+      const bal = el('span', 'val')
+      bal.append(el('span', '', '余额 '), el('b', '', fmt(item.balance)))
+      row.append(bal)
+    } else if (item.hasPercent) {
+      const used = (item.windows || []).filter((w) => w.kind === 'percent')
+      const text = used.map((w) => `${w.name} ${pct(w.pct)}`).join(' · ')
+      const val = el('span', 'val')
+      val.append(el('span', '', '用量 '), el('b', '', text))
+      row.append(val)
     }
-
-    const val = el('span', 'val')
-    val.append(el('span', '', '已用 '), el('b', '', fmt(item.used)), el('span', '', ` / ${fmt(item.limit)} · ${pct(item.usedPct)}`))
-    row.append(el('span', 'grow'), val)
-
-    const remain = el('span', 'val')
-    remain.append(el('span', '', '剩余 '), el('b', '', fmt(item.remain)))
-    row.append(remain)
 
     if (item.expiring > 0) {
       const exp = el('span', 'val exp')
@@ -127,7 +142,8 @@
 
     const meta = []
     meta.push(`${provider.accounts} 个账号`)
-    if (provider.known < provider.accounts) meta.push(`${provider.accounts - provider.known} 个额度不可读`)
+    if (provider.balanceOnly > 0) meta.push(`${provider.balanceOnly} 个仅余额`)
+    if (provider.percentOnly > 0) meta.push(`${provider.percentOnly} 个仅百分比`)
     if (provider.plans.length) meta.push(provider.plans.slice(0, 3).join(' / '))
     top.append(el('span', 'meta', meta.join(' · ')))
     top.append(el('span', 'grow'))
@@ -148,16 +164,21 @@
     card.append(top)
 
     const nums = el('div', 'nums')
-    nums.append(kv('总量', fmt(provider.limit)))
-    nums.append(kv('已用', fmt(provider.used)))
-    nums.append(kv('消耗', pct(provider.usedPct), 'pct'))
-    nums.append(kv('剩余', fmt(provider.remain)))
+    if (provider.limit > 0) {
+      nums.append(kv('总量', fmt(provider.limit)))
+      nums.append(kv('已用', fmt(provider.used)))
+      nums.append(kv('消耗', pct(provider.usedPct), 'pct'))
+      nums.append(kv('剩余', fmt(provider.remain)))
+    }
+    if (provider.balance > 0 || (provider.balanceOnly > 0 && provider.limit === 0)) nums.append(kv('余额', fmt(provider.balance)))
+    if (provider.peakPct > 0 || provider.percentOnly > 0) nums.append(kv('最高用量', pct(provider.peakPct), 'pct'))
     if (provider.expiring > 0) nums.append(kv('到期', fmt(provider.expiring), 'exp'))
     card.append(nums)
 
     const bar = el('div', 'bar')
     const fill = el('i')
-    fill.style.width = `${Math.min(100, Math.max(0, provider.usedPct))}%`
+    const pctValue = provider.limit > 0 ? provider.usedPct : provider.peakPct
+    fill.style.width = `${Math.min(100, Math.max(0, pctValue))}%`
     bar.append(fill)
     card.append(bar)
 
@@ -214,7 +235,11 @@
       cb.addEventListener('change', () => toggleProvider(p.id, cb.checked))
       row.append(cb)
       row.append(el('span', 'pname', p.name))
-      row.append(el('span', 'pmeta', `${p.accounts} 个账号 · 总量 ${fmt(p.limit)} · 已用 ${fmt(p.used)}`))
+      const parts = [`${p.accounts} 个账号`]
+      if (p.limit > 0) parts.push(`总量 ${fmt(p.limit)} · 已用 ${fmt(p.used)}`)
+      if (p.balance > 0 || (p.balanceOnly > 0 && p.limit <= 0)) parts.push(`余额 ${fmt(p.balance)}`)
+      if (p.limit <= 0 && (p.peakPct > 0 || p.percentOnly > 0)) parts.push(`最高用量 ${pct(p.peakPct)}`)
+      row.append(el('span', 'pmeta', parts.join(' · ')))
       box.append(row)
     }
 
@@ -247,7 +272,8 @@
       sub.push(`${providers.length} 个供应商 / ${scope.accounts} 个账号`)
       if (excluded.size) sub.push(`已排除 ${excluded.size} 个`)
     }
-    if (scope.known < scope.accounts) sub.push(`${scope.accounts - scope.known} 个额度不可读`)
+    if (scope.balanceOnly) sub.push(`${scope.balanceOnly} 个仅余额`)
+    if (scope.percentOnly) sub.push(`${scope.percentOnly} 个仅百分比`)
     if (data.at) sub.push(`配额更新于 ${clock(data.at)}`)
     head.append(el('span', 'sub', sub.join(' · ')))
     head.append(el('span', 'spacer'))
@@ -274,9 +300,12 @@
       box.append(v)
       totals.append(box)
     }
-    addTotal('积分总量', fmt(scope.limit))
-    addTotal('已用', fmt(scope.used), `消耗 ${pct(scope.usedPct)}`)
-    addTotal('剩余', fmt(scope.remain))
+    if (scope.limit > 0) {
+      addTotal('积分总量', fmt(scope.limit))
+      addTotal('已用', fmt(scope.used), `消耗 ${pct(scope.usedPct)}`)
+      addTotal('剩余', fmt(scope.remain))
+    }
+    if (scope.balance > 0) addTotal('余额', fmt(scope.balance), scope.limit > 0 ? '仅余额供应商' : undefined)
     addTotal(`${data.days} 天内到期`, fmt(scope.expiring), clock(scope.expiresAt), scope.expiring > 0)
     root.append(totals)
 
