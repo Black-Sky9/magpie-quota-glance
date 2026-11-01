@@ -34,6 +34,12 @@ magpie plugin add "<path to this folder>"
 magpie plugin            # expect: panels  Credits on usage, Credits on provider (reads nothing)
 ```
 
+Or straight from GitHub:
+
+```bash
+magpie plugin add github:Black-Sky9/magpie-quota-glance
+```
+
 Then open **Usage › Overview** and scroll to the bottom. See [INSTALL.md](INSTALL.md)
 for the detailed steps, uninstall, and troubleshooting (中文).
 

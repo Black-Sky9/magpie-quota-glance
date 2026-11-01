@@ -26,6 +26,11 @@
     "panel"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Black-Sky9/magpie-quota-glance.git"
+  },
+  "homepage": "https://github.com/Black-Sky9/magpie-quota-glance#readme",
   "magpie": {
     "name": "积分总览",
     "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9Iuenr+WIhuaAu+iniCI+DQogIDx0aXRsZT7np6/liIbmgLvop4g8L3RpdGxlPg0KICA8ZGVmcz4NCiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InEiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4NCiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzRDN0RGRiIgLz4NCiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzEyQjNBMCIgLz4NCiAgICA8L2xpbmVhckdyYWRpZW50Pg0KICA8L2RlZnM+DQogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE1IiBmaWxsPSJ1cmwoI3EpIiAvPg0KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+DQogICAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMTciIHN0cm9rZS13aWR0aD0iNiIgc3Ryb2tlLW9wYWNpdHk9IjAuMzUiIC8+DQogICAgPHBhdGggZD0iTTMyIDE1YTE3IDE3IDAgMSAxLTExLjk1IDI5LjA1IiBzdHJva2Utd2lkdGg9IjYiIC8+DQogIDwvZz4NCiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iNC41IiBmaWxsPSIjRkZGRkZGIiAvPg0KPC9zdmc+DQo=",

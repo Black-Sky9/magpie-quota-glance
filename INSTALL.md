@@ -20,7 +20,11 @@
 
    Windows 例：`magpie plugin add "C:\Tools\magpie-quota-glance"`
 
-   也可以在应用里「插件 → 添加」选这个文件夹。
+   也可以在应用里「插件 → 添加」选这个文件夹。或者直接从 GitHub 拉：
+
+   ```
+   magpie plugin add github:Black-Sky9/magpie-quota-glance
+   ```
 
 3. 确认已加载：
 
