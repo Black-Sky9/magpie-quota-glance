@@ -11,6 +11,8 @@
   const opened = new Set()
   const excluded = new Set() // 被排除在合计之外的供应商 id，存在插件自己的 options 里
   let pickerOpen = false
+  let showBuckets = false // 顶部「剩余按到期分布」默认收起
+  let opts = {}
   let savedAt = 0
   let saveTimer = 0
 
@@ -104,16 +106,17 @@
     return row
   }
 
-  // options 每秒最多写一次，连续勾选时合并成一次
-  function saveExcluded() {
-    const list = [...excluded]
+  // options 每秒最多写一次，连续操作时合并成一次
+  function saveOptions() {
+    const next = { ...opts, excluded: [...excluded], showBuckets }
+    opts = next
     const now = Date.now()
     clearTimeout(saveTimer)
     const wait = Math.max(0, 1000 - (now - savedAt))
     saveTimer = setTimeout(() => {
       savedAt = Date.now()
       try {
-        magpie.options?.set?.({ excluded: list })
+        magpie.options?.set?.(next)
       } catch {
         /* 写不进去也不影响本次显示 */
       }
@@ -124,7 +127,14 @@
     if (include) excluded.delete(id)
     else excluded.add(id)
     renderedKey = ''
-    saveExcluded()
+    saveOptions()
+    render()
+  }
+
+  function toggleBuckets() {
+    showBuckets = !showBuckets
+    renderedKey = ''
+    saveOptions()
     render()
   }
 
@@ -285,7 +295,13 @@
     head.append(el('span', 'spacer'))
 
     if (!onlyProvider && data.providers.length) {
-      const pick = el('button', `pick${pickerOpen ? ' on' : ''}`, pickerOpen ? '收起选择' : '选择供应商')
+      const dist = el('button', `pick${showBuckets ? ' on' : ''}`, '到期分布')
+      dist.type = 'button'
+      dist.title = showBuckets ? '收起顶部的到期分布' : '展开顶部的到期分布'
+      dist.addEventListener('click', toggleBuckets)
+      head.append(dist)
+
+      const pick = el('button', `pick${pickerOpen ? ' on' : ''}`, '选择供应商')
       pick.type = 'button'
       pick.addEventListener('click', () => {
         pickerOpen = !pickerOpen
@@ -312,7 +328,8 @@
     addTotal(`${data.days} 天内到期`, fmt(scope.expiring), clock(scope.expiresAt), scope.expiring > 0)
     root.append(totals)
 
-    if (scope.buckets) {
+    // 顶部全站分档默认收起，用标题栏的「到期分布」按钮展开
+    if (showBuckets && !onlyProvider && scope.buckets) {
       const row = el('div', 'bucket-row')
       row.append(el('span', 'bucket-label', '剩余按到期分布'))
       row.append(bucketChips(scope.buckets))
@@ -382,14 +399,16 @@
 
     onlyProvider = magpie.context?.provider?.id || ''
 
-    // 用户在「选择供应商」里排除掉的那些，存在插件自己的 options 里
+    // 排除掉的供应商、是否展开顶部到期分布，都存在插件自己的 options 里
     try {
-      const opts = await magpie.options?.get?.()
-      if (Array.isArray(opts?.excluded)) {
+      const loaded = await magpie.options?.get?.()
+      opts = loaded && typeof loaded === 'object' ? loaded : {}
+      if (Array.isArray(opts.excluded)) {
         for (const id of opts.excluded) if (typeof id === 'string' && id) excluded.add(id)
       }
+      showBuckets = opts.showBuckets === true
     } catch {
-      /* 读不到就用全选 */
+      /* 读不到就用默认值 */
     }
 
     render()
