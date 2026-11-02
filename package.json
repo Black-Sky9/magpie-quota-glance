@@ -1,6 +1,6 @@
 {
   "name": "magpie-quota-glance",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "把每个供应商的积分使用详情和总览显示在底部板块，同时也标记了3天内过期的积分详情。",
   "type": "module",
   "main": "./index.mjs",

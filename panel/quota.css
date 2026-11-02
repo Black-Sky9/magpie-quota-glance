@@ -211,9 +211,34 @@ body {
   background: rgba(47, 158, 99, 0.13);
 }
 
+/* 15 天以上：金色，带渐变描边 + 外发光 */
 .bk.later {
-  color: var(--q-muted);
-  background: var(--q-card);
+  color: #8a5a00;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
+    linear-gradient(135deg, #ffdc86, #e0a800 45%, #ff9d3f) border-box;
+  box-shadow:
+    0 0 7px rgba(224, 168, 0, 0.35),
+    inset 0 0 6px rgba(255, 214, 110, 0.22);
+}
+
+.bk.later b {
+  color: #a86a00;
+}
+
+:root[data-theme='dark'] .bk.later {
+  color: #f0c65a;
+  background:
+    linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
+    linear-gradient(135deg, #ffe9a8, #e0a800 45%, #ff8a4c) border-box;
+  box-shadow:
+    0 0 9px rgba(224, 168, 0, 0.45),
+    inset 0 0 7px rgba(255, 214, 110, 0.18);
+}
+
+:root[data-theme='dark'] .bk.later b {
+  color: #ffd873;
 }
 
 .bk.zero {
