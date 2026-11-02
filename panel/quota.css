@@ -211,16 +211,30 @@ body {
   background: rgba(47, 158, 99, 0.13);
 }
 
-/* 15 天以上：金色，带渐变描边 + 外发光 */
+/* 15 天以上：金色，渐变描边绕圈 + 呼吸光 */
+@property --bk-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .bk.later {
   color: #8a5a00;
   border: 1px solid transparent;
   background:
     linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
-    linear-gradient(135deg, #ffdc86, #e0a800 45%, #ff9d3f) border-box;
-  box-shadow:
-    0 0 7px rgba(224, 168, 0, 0.35),
-    inset 0 0 6px rgba(255, 214, 110, 0.22);
+    conic-gradient(
+        from var(--bk-angle),
+        #ffdc86,
+        #e0a800 25%,
+        #ff9d3f 50%,
+        #ffe9a8 75%,
+        #ffdc86
+      )
+      border-box;
+  animation:
+    bk-spin 6s linear infinite,
+    bk-breathe 3.2s ease-in-out infinite;
 }
 
 .bk.later b {
@@ -231,18 +245,79 @@ body {
   color: #f0c65a;
   background:
     linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
-    linear-gradient(135deg, #ffe9a8, #e0a800 45%, #ff8a4c) border-box;
-  box-shadow:
-    0 0 9px rgba(224, 168, 0, 0.45),
-    inset 0 0 7px rgba(255, 214, 110, 0.18);
+    conic-gradient(
+        from var(--bk-angle),
+        #ffe9a8,
+        #e0a800 25%,
+        #ff8a4c 50%,
+        #fff3c4 75%,
+        #ffe9a8
+      )
+      border-box;
 }
 
 :root[data-theme='dark'] .bk.later b {
   color: #ffd873;
 }
 
+@keyframes bk-spin {
+  to {
+    --bk-angle: 360deg;
+  }
+}
+
+@keyframes bk-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 6px rgba(224, 168, 0, 0.28),
+      inset 0 0 6px rgba(255, 214, 110, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 15px rgba(224, 168, 0, 0.55),
+      inset 0 0 10px rgba(255, 214, 110, 0.3);
+  }
+}
+
+/* 1 天内：红色缓慢脉冲，提示最紧急 */
+.bk.d1 {
+  animation: bk-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes bk-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(214, 69, 69, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(214, 69, 69, 0.45);
+  }
+}
+
+.bk {
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+.bk:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.15) brightness(1.03);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk,
+  .bk.later,
+  .bk.d1 {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 .bk.zero {
   opacity: 0.4;
+  animation: none !important;
 }
 
 .bucket-row {
