@@ -78,16 +78,44 @@ function creditWindowsOf(entry) {
   return out
 }
 
-/** 该窗口在 N 天内失效的积分；runsOutAt 是积分批次真正作废的时刻，resetsAt 是周期重置。 */
-function lapsingWithin(window, now, days) {
-  const horizon = now + days * DAY
-  if (window.lapsAt > now && window.lapsAt <= horizon) {
-    return { credits: window.laps > 0 ? Math.min(window.laps, window.remain) : window.remain, at: window.lapsAt }
+const BUCKET_DAYS = { d1: 1, d3: 3, d7: 7, d15: 15 }
+
+/** 空的分档计数：1 天内 / 3 天内 / 7 天内 / 15 天内 / 15 天以上（合计 = 剩余积分） */
+const emptyBuckets = () => ({ d1: 0, d3: 0, d7: 0, d15: 0, later: 0 })
+
+/**
+ * 把某个窗口的剩余积分按到期紧迫程度归到一档。
+ * magpie 只给得出「最快作废的那批」的时刻（runsOutAt/laps）与周期重置时刻（resetsAt），
+ * 剩下的积分没有更细的到期信息，因此归入「15 天以上」，保证各档之和恒等于剩余积分。
+ */
+function addToBuckets(buckets, window, now) {
+  const remain = window.remain
+  if (!(remain > 0)) return { expiring: 0, expiresAt: 0 }
+
+  let at = 0
+  let credits = remain
+  if (window.lapsAt > now) {
+    at = window.lapsAt
+    credits = window.laps > 0 ? Math.min(window.laps, remain) : remain
+  } else if (window.resetsAt > now) {
+    at = window.resetsAt
+  } else {
+    buckets.later += remain
+    return { expiring: 0, expiresAt: 0 }
   }
-  if (window.resetsAt > now && window.resetsAt <= horizon) {
-    return { credits: window.remain, at: window.resetsAt }
-  }
-  return null
+
+  const days = (at - now) / DAY
+  const key = days <= 1 ? 'd1' : days <= 3 ? 'd3' : days <= 7 ? 'd7' : days <= 15 ? 'd15' : 'later'
+  buckets[key] += credits
+  if (remain > credits) buckets.later += remain - credits
+
+  const near = key === 'd1' || key === 'd3'
+  return { expiring: near ? credits : 0, expiresAt: near ? at : 0 }
+}
+
+function addBuckets(target, source) {
+  for (const key of Object.keys(BUCKET_DAYS).concat('later')) target[key] += source?.[key] || 0
+  return target
 }
 
 function buildSnapshot(raw, now) {
@@ -113,17 +141,16 @@ function buildSnapshot(raw, now) {
       expiring: 0,
       expiresAt: 0,
       windows,
+      buckets: emptyBuckets(),
     }
 
     for (const w of windows) {
       account.limit += w.limit
       account.used += w.used
       account.remain += w.remain
-      const lapse = lapsingWithin(w, now, EXPIRING_DAYS)
-      if (lapse) {
-        account.expiring += lapse.credits
-        account.expiresAt = account.expiresAt ? Math.min(account.expiresAt, lapse.at) : lapse.at
-      }
+      const lapse = addToBuckets(account.buckets, w, now)
+      if (lapse.expiring) account.expiring += lapse.expiring
+      if (lapse.expiresAt) account.expiresAt = account.expiresAt ? Math.min(account.expiresAt, lapse.expiresAt) : lapse.expiresAt
     }
 
     account.usedPct = account.limit > 0 ? (account.used / account.limit) * 100 : 0
@@ -145,6 +172,7 @@ function buildSnapshot(raw, now) {
   const list = [...providers.values()]
     .map((provider) => {
       const sum = { limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0, known: 0 }
+      const buckets = emptyBuckets()
       for (const a of provider.accounts) {
         if (a.known) sum.known += 1
         sum.limit += a.limit
@@ -152,6 +180,7 @@ function buildSnapshot(raw, now) {
         sum.remain += a.remain
         sum.expiring += a.expiring
         if (a.expiresAt) sum.expiresAt = sum.expiresAt ? Math.min(sum.expiresAt, a.expiresAt) : a.expiresAt
+        addBuckets(buckets, a.buckets)
       }
       const plans = [...new Set(provider.accounts.map((a) => a.plan).filter(Boolean))]
       provider.accounts.sort((a, b) => b.used - a.used || b.limit - a.limit)
@@ -167,14 +196,26 @@ function buildSnapshot(raw, now) {
         expiring: sum.expiring,
         expiresAt: sum.expiresAt,
         usedPct: sum.limit > 0 ? (sum.used / sum.limit) * 100 : 0,
+        buckets,
         items: provider.accounts,
       }
     })
     .filter((p) => p.accounts > 0)
     .sort((a, b) => b.limit - a.limit || a.name.localeCompare(b.name))
 
-  const total = { providers: list.length, accounts: 0, known: 0, limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0 }
+  const total = {
+    providers: list.length,
+    accounts: 0,
+    known: 0,
+    limit: 0,
+    used: 0,
+    remain: 0,
+    expiring: 0,
+    expiresAt: 0,
+    buckets: emptyBuckets(),
+  }
   for (const p of list) {
+    addBuckets(total.buckets, p.buckets)
     total.accounts += p.accounts
     total.known += p.known
     total.limit += p.limit

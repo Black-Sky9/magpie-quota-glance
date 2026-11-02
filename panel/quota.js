@@ -54,7 +54,17 @@
 
   /** 只对纳入合计的供应商求和 */
   const sumOf = (list) => {
-    const sum = { providers: list.length, accounts: 0, known: 0, limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0 }
+    const sum = {
+      providers: list.length,
+      accounts: 0,
+      known: 0,
+      limit: 0,
+      used: 0,
+      remain: 0,
+      expiring: 0,
+      expiresAt: 0,
+      buckets: { d1: 0, d3: 0, d7: 0, d15: 0, later: 0 },
+    }
     for (const p of list) {
       sum.accounts += p.accounts
       sum.known += p.known ?? p.accounts
@@ -63,9 +73,31 @@
       sum.remain += p.remain
       sum.expiring += p.expiring
       if (p.expiresAt) sum.expiresAt = sum.expiresAt ? Math.min(sum.expiresAt, p.expiresAt) : p.expiresAt
+      for (const key of Object.keys(sum.buckets)) sum.buckets[key] += p.buckets?.[key] || 0
     }
     sum.usedPct = sum.limit > 0 ? (sum.used / sum.limit) * 100 : 0
     return sum
+  }
+
+  const BUCKET_LABELS = [
+    ['d1', '1 天内'],
+    ['d3', '3 天内'],
+    ['d7', '7 天内'],
+    ['d15', '15 天内'],
+    ['later', '15 天以上'],
+  ]
+
+  /** 到期分档：越临期越靠左，五档之和 = 剩余积分 */
+  function bucketChips(buckets, className) {
+    const row = el('span', `buckets${className ? ` ${className}` : ''}`)
+    row.title = '按到期时间划分的剩余积分，五档相加等于剩余积分'
+    for (const [key, label] of BUCKET_LABELS) {
+      const n = buckets?.[key] || 0
+      const bk = el('span', `bk ${key}${n > 0 ? '' : ' zero'}`)
+      bk.append(el('span', 'k', label), el('b', '', fmt(n)))
+      row.append(bk)
+    }
+    return row
   }
 
   // options 每秒最多写一次，连续勾选时合并成一次
@@ -132,11 +164,8 @@
     top.append(el('span', 'meta', meta.join(' · ')))
     top.append(el('span', 'grow'))
 
-    if (provider.expiring > 0) {
-      const chip = el('span', 'chip warn')
-      chip.append(el('span', '', '3 天内到期'), el('b', '', fmt(provider.expiring)))
-      top.append(chip)
-    }
+    // 到期分档：越临期越靠左；五档之和 = 该供应商的剩余积分
+    if (provider.buckets) top.append(bucketChips(provider.buckets))
 
     if (allowExclude) {
       const drop = el('button', 'exclude', '排除')
@@ -152,7 +181,6 @@
     nums.append(kv('已用', fmt(provider.used)))
     nums.append(kv('消耗', pct(provider.usedPct), 'pct'))
     nums.append(kv('剩余', fmt(provider.remain)))
-    if (provider.expiring > 0) nums.append(kv('到期', fmt(provider.expiring), 'exp'))
     card.append(nums)
 
     const bar = el('div', 'bar')
@@ -279,6 +307,13 @@
     addTotal('剩余', fmt(scope.remain))
     addTotal(`${data.days} 天内到期`, fmt(scope.expiring), clock(scope.expiresAt), scope.expiring > 0)
     root.append(totals)
+
+    if (scope.buckets) {
+      const row = el('div', 'bucket-row')
+      row.append(el('span', 'bucket-label', '剩余按到期分布'))
+      row.append(bucketChips(scope.buckets))
+      root.append(row)
+    }
 
     if (!all.length) {
       root.append(el('p', 'empty', onlyProvider ? '这个供应商还没有可读的积分额度。' : '没有可读的积分额度。'))
