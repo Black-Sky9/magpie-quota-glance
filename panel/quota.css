@@ -173,6 +173,8 @@ body {
 }
 
 .bk {
+  position: relative;
+  overflow: hidden;
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
@@ -181,9 +183,41 @@ body {
   font-size: 11px;
   line-height: 18px;
   font-variant-numeric: tabular-nums;
-  background: var(--q-card);
-  color: var(--q-muted);
+  color: var(--ink, var(--q-muted));
   border: 1px solid transparent;
+  background:
+    linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
+    conic-gradient(
+        from var(--bk-angle),
+        var(--c1),
+        var(--c2) 25%,
+        var(--c3) 50%,
+        var(--c4) 75%,
+        var(--c1)
+      )
+      border-box;
+  animation:
+    bk-spin var(--spin, 7s) linear infinite,
+    bk-breathe var(--breathe, 3.4s) ease-in-out infinite;
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+/* 随机流光：从色块右侧扫到左侧 */
+.bk::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 42%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+  transform: translateX(240%);
+  opacity: 0;
+  animation: bk-sheen var(--sheen, 6s) linear infinite;
+  animation-delay: var(--sheen-delay, 0s);
 }
 
 .bk b {
@@ -191,24 +225,46 @@ body {
   color: inherit;
 }
 
+/* 五档配色：c1–c4 是描边渐变，ink 是文字，glow 是呼吸光 */
 .bk.d1 {
-  color: #d64545;
-  background: rgba(214, 69, 69, 0.12);
+  --c1: #ffb8b8;
+  --c2: #d64545;
+  --c3: #ff8080;
+  --c4: #ffdede;
+  --ink: #b02a2a;
+  --glow: rgba(214, 69, 69, 0.5);
+  --glow-soft: rgba(214, 69, 69, 0.22);
+  --breathe: 2.6s;
 }
 
 .bk.d3 {
-  color: #e07b2f;
-  background: rgba(224, 123, 47, 0.14);
+  --c1: #ffd3ae;
+  --c2: #e07b2f;
+  --c3: #ffa964;
+  --c4: #ffeadd;
+  --ink: #a5551a;
+  --glow: rgba(224, 123, 47, 0.5);
+  --glow-soft: rgba(224, 123, 47, 0.22);
 }
 
 .bk.d7 {
-  color: #b58900;
-  background: rgba(181, 137, 0, 0.15);
+  --c1: #ffecb8;
+  --c2: #c99612;
+  --c3: #f2c94c;
+  --c4: #fff6d9;
+  --ink: #8a6508;
+  --glow: rgba(201, 150, 18, 0.5);
+  --glow-soft: rgba(201, 150, 18, 0.22);
 }
 
 .bk.d15 {
-  color: #2f9e63;
-  background: rgba(47, 158, 99, 0.13);
+  --c1: #c3ead3;
+  --c2: #2f9e63;
+  --c3: #74d69a;
+  --c4: #e2f7ea;
+  --ink: #1f7a4a;
+  --glow: rgba(47, 158, 99, 0.45);
+  --glow-soft: rgba(47, 158, 99, 0.2);
 }
 
 /* 15 天以上：金色，渐变描边绕圈 + 呼吸光 */
@@ -219,45 +275,35 @@ body {
 }
 
 .bk.later {
-  color: #8a5a00;
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
-    conic-gradient(
-        from var(--bk-angle),
-        #ffdc86,
-        #e0a800 25%,
-        #ff9d3f 50%,
-        #ffe9a8 75%,
-        #ffdc86
-      )
-      border-box;
-  animation:
-    bk-spin 6s linear infinite,
-    bk-breathe 3.2s ease-in-out infinite;
+  --c1: #ffdc86;
+  --c2: #e0a800;
+  --c3: #ff9d3f;
+  --c4: #ffe9a8;
+  --ink: #8a5a00;
+  --glow: rgba(224, 168, 0, 0.5);
+  --glow-soft: rgba(224, 168, 0, 0.24);
+  --spin: 8s;
 }
 
-.bk.later b {
-  color: #a86a00;
+/* 深色主题只需要把文字提亮 */
+:root[data-theme='dark'] .bk.d1 {
+  --ink: #ff9090;
+}
+
+:root[data-theme='dark'] .bk.d3 {
+  --ink: #ffb168;
+}
+
+:root[data-theme='dark'] .bk.d7 {
+  --ink: #ffd76a;
+}
+
+:root[data-theme='dark'] .bk.d15 {
+  --ink: #7fe0a5;
 }
 
 :root[data-theme='dark'] .bk.later {
-  color: #f0c65a;
-  background:
-    linear-gradient(var(--q-bg), var(--q-bg)) padding-box,
-    conic-gradient(
-        from var(--bk-angle),
-        #ffe9a8,
-        #e0a800 25%,
-        #ff8a4c 50%,
-        #fff3c4 75%,
-        #ffe9a8
-      )
-      border-box;
-}
-
-:root[data-theme='dark'] .bk.later b {
-  color: #ffd873;
+  --ink: #ffd873;
 }
 
 @keyframes bk-spin {
@@ -270,54 +316,54 @@ body {
   0%,
   100% {
     box-shadow:
-      0 0 6px rgba(224, 168, 0, 0.28),
-      inset 0 0 6px rgba(255, 214, 110, 0.18);
+      0 0 5px var(--glow-soft),
+      inset 0 0 5px var(--glow-soft);
   }
   50% {
     box-shadow:
-      0 0 15px rgba(224, 168, 0, 0.55),
-      inset 0 0 10px rgba(255, 214, 110, 0.3);
+      0 0 14px var(--glow),
+      inset 0 0 9px var(--glow-soft);
   }
 }
 
-/* 1 天内：红色缓慢脉冲，提示最紧急 */
-.bk.d1 {
-  animation: bk-pulse 2.6s ease-in-out infinite;
-}
-
-@keyframes bk-pulse {
-  0%,
+@keyframes bk-sheen {
+  0% {
+    transform: translateX(240%);
+    opacity: 0;
+  }
+  3% {
+    opacity: 0.9;
+  }
+  15% {
+    transform: translateX(-260%);
+    opacity: 0;
+  }
   100% {
-    box-shadow: 0 0 0 rgba(214, 69, 69, 0);
+    transform: translateX(-260%);
+    opacity: 0;
   }
-  50% {
-    box-shadow: 0 0 10px rgba(214, 69, 69, 0.45);
-  }
-}
-
-.bk {
-  transition:
-    transform 0.15s ease,
-    filter 0.15s ease;
 }
 
 .bk:hover {
   transform: translateY(-1px);
-  filter: saturate(1.15) brightness(1.03);
+  filter: saturate(1.12) brightness(1.04);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .bk,
-  .bk.later,
-  .bk.d1 {
+  .bk::after {
     animation: none !important;
     transition: none !important;
   }
 }
 
 .bk.zero {
-  opacity: 0.4;
+  opacity: 0.55;
   animation: none !important;
+}
+
+.bk.zero::after {
+  display: none;
 }
 
 .bucket-row {

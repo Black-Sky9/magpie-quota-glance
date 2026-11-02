@@ -94,6 +94,10 @@
     for (const [key, label] of BUCKET_LABELS) {
       const n = buckets?.[key] || 0
       const bk = el('span', `bk ${key}${n > 0 ? '' : ' zero'}`)
+      // 每个色块的描边转速、闪光周期与相位都随机，看起来才不是整齐划一
+      bk.style.setProperty('--spin', `${(6 + Math.random() * 5).toFixed(2)}s`)
+      bk.style.setProperty('--sheen', `${(4.5 + Math.random() * 5).toFixed(2)}s`)
+      bk.style.setProperty('--sheen-delay', `${(-Math.random() * 9).toFixed(2)}s`)
       bk.append(el('span', 'k', label), el('b', '', fmt(n)))
       row.append(bk)
     }
