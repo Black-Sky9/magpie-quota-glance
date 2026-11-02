@@ -38,14 +38,14 @@ const toTime = (value) => {
 
 /**
  * 账号在快照里只留一个短哈希：面板是给眼睛看的，不需要真实账号 ID，
- * 而 live.js 就躺在插件目录里，不该带可定位到具体账号的标识（如 iam::…）。
+ * 而 live.js 就躺在插件目录里，不该带可定位到具体账号的标识（例如云平台的 IAM 账号 ID）。
  */
 const shortId = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 8)
 
 /**
  * 一个账号计入统计的积分窗口。
  * quotas.json 的 windows 与 spans 按下标对应：spans[i].aside（或 window.aside）
- * 只是总额的拆分（CodeArts 的「基础积分包」「赠送积分包」），不能重复计入。
+ * 只是总额的拆分（如「总积分」下面的子包），不能重复计入。
  */
 function creditWindowsOf(entry) {
   const quota = entry?.quota ?? {}

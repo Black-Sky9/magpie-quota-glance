@@ -79,7 +79,7 @@ quotas.json ──► index.mjs（聚合）──► panel/live.js ──► 面
 
 聚合口径：
 
-- 只统计总额窗口；带 `aside` 标记的（或 `spans[i].aside`）是同一笔积分的拆分（例如 CodeArts 的「基础积分包」「赠送积分包」），跳过不重复计入。
+- 只统计总额窗口；带 `aside` 标记的（或 `spans[i].aside`）是同一笔积分的拆分（例如「总积分」下面的「基础积分包」「赠送积分包」），跳过不重复计入。
 - `used` 是百分比，`amount` 是已用积分，`limit` 是上限。
 - 到期积分优先取 `runsOutAt`（批次作废时刻），其次取 `resetsAt`（周期重置）；两者都有时取 `min(runsOut, 剩余)`。
 - `runsOutAt` 不是「按当前速度会用完」的预测，只作为批次作废时刻使用。
