@@ -23,11 +23,18 @@
 
   const CURRENCY = /^[-$¥€£]$/
 
+  /** 单位的中文名（宿主给的是归一后的单位，credits 要显示成「积分」） */
+  const unitText = (unit, label) => {
+    if (CURRENCY.test(unit || '')) return unit
+    return label || unit || ''
+  }
+
   /** 数额 + 单位：「1,234 积分」「$0」「5185.5 credits」 */
-  const money = (amount, unit) => {
+  const money = (amount, unit, label) => {
     const value = fmt(amount)
-    if (!unit) return value
-    return CURRENCY.test(unit) ? `${unit}${value}` : `${value} ${unit}`
+    const u = unitText(unit, label)
+    if (!u) return value
+    return CURRENCY.test(unit) ? `${unit}${value}` : `${value} ${u}`
   }
 
   const short = (text, max = 60) => {
@@ -214,7 +221,7 @@
 
     for (const bal of item.balances || []) {
       const val = el('span', 'val')
-      val.append(el('span', '', '余额 '), el('b', '', money(bal.amount, bal.unit)))
+      val.append(el('span', '', '余额 '), el('b', '', money(bal.amount, bal.unit, bal.label)))
       row.append(val)
     }
 
@@ -273,7 +280,7 @@
     for (const track of provider.units || []) {
       const group = el('div', 'unit')
       if (provider.units.length > 1 || track.label !== '积分') {
-        const label = el('div', 'unit-label', `${track.label}额度`)
+        const label = el('div', 'unit-label', track.label)
         group.append(label)
       }
       group.append(amountNums(track, days))
@@ -297,7 +304,7 @@
     // 余额口径：按单位分列
     for (const bal of provider.balances || []) {
       const nums = el('div', 'nums')
-      nums.append(kv(`余额（${bal.label}${bal.accounts > 1 ? ` · ${bal.accounts} 个账号` : ''}）`, money(bal.amount, bal.unit)))
+      nums.append(kv(`余额（${bal.label}${bal.accounts > 1 ? ` · ${bal.accounts} 个账号` : ''}）`, money(bal.amount, bal.unit, bal.label)))
       card.append(nums)
     }
 
@@ -337,7 +344,7 @@
   function summaryOf(provider) {
     const parts = [`${provider.accounts} 个账号`]
     for (const track of provider.units || []) parts.push(`${track.label} ${fmt(track.limit)} · 已用 ${fmt(track.used)}`)
-    for (const bal of provider.balances || []) parts.push(`余额 ${money(bal.amount, bal.unit)}`)
+    for (const bal of provider.balances || []) parts.push(`余额 ${money(bal.amount, bal.unit, bal.label)}`)
     for (const percent of provider.percents || []) parts.push(`${percent.label}剩 ${pct(percent.left)}`)
     if (!(provider.units || []).length && !(provider.balances || []).length && !(provider.percents || []).length) parts.push('额度未读')
     return parts.join(' · ')
@@ -392,7 +399,7 @@
   function otherRow(scope, providers) {
     const counts = { text: 0, none: 0 }
     const items = []
-    for (const bal of scope.balances || []) if (bal.amount > 0) items.push(chip(`余额 ${money(bal.amount, bal.unit)}`))
+    for (const bal of scope.balances || []) if (bal.amount > 0) items.push(chip(`余额 ${money(bal.amount, bal.unit, bal.label)}`))
     for (const percent of scope.percents || []) items.push(chip(`${percent.label}剩 ${pct(percent.left)}${percent.name ? `（${percent.name}）` : ''}`))
     for (const p of providers) {
       if (p.kind === 'text') counts.text += 1
@@ -423,7 +430,9 @@
     for (const track of total.units || []) {
       addCard(`${track.label}总量`, fmt(track.limit), `已用 ${fmt(track.used)} · 消耗 ${pct(track.usedPct)}`)
     }
-    addCard(`${days} 天内到期`, fmt(total.expiring), clock(total.expiresAt), total.expiring > 0)
+    for (const track of total.units || []) {
+      if (track.expiring > 0) addCard(`${track.label} ${days} 天内到期`, fmt(track.expiring), clock(track.expiresAt), true)
+    }
     return cards
   }
 
@@ -452,7 +461,9 @@
       for (const track of p.units || []) {
         let bucket = scope.units.find((u) => u.unit === track.unit)
         if (!bucket) {
-          bucket = { unit: track.unit, label: track.label, limit: 0, used: 0, remain: 0, usedPct: 0, expiring: 0, expiresAt: 0, buckets: { d1: 0, d3: 0, d7: 0, d15: 0, later: 0 } }
+          // 全站合计按单位分组，标题只用单位名（供应商卡片里才带窗口名）
+          const label = String(track.label || track.unit || '').split('·')[0]
+          bucket = { unit: track.unit, label, limit: 0, used: 0, remain: 0, usedPct: 0, expiring: 0, expiresAt: 0, buckets: { d1: 0, d3: 0, d7: 0, d15: 0, later: 0 } }
           scope.units.push(bucket)
         }
         bucket.limit += track.limit
@@ -485,7 +496,10 @@
       }
     }
     for (const track of scope.units) track.usedPct = track.limit > 0 ? (track.used / track.limit) * 100 : 0
-    const primary = scope.units.slice().sort((a, b) => b.limit - a.limit)[0]
+    // 「剩余按到期分布」用额度最大的非令牌分组（积分那一组）
+    const primary = scope.units
+      .slice()
+      .sort((a, b) => (/token/i.test(String(a.unit)) === /token/i.test(String(b.unit)) ? b.limit - a.limit : /token/i.test(String(a.unit)) ? 1 : -1))[0]
     if (primary) {
       scope.expiring = primary.expiring
       scope.expiresAt = primary.expiresAt

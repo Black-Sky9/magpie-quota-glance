@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
-import { buildSnapshot, loadRegistry } from '../core.mjs'
+import { buildSnapshot, loadRegistry, entriesFromApi, entriesFromCache } from '../core.mjs'
 
 class El {
   constructor(tag) {
@@ -105,8 +105,15 @@ if (arg && arg.endsWith('.json')) {
   snapshot = JSON.parse(await readFile(arg, 'utf8'))
 } else {
   const dir = arg || join(homedir(), '.config', 'magpie')
-  const raw = JSON.parse(await readFile(join(dir, 'quotas.json'), 'utf8'))
-  snapshot = buildSnapshot(raw, await loadRegistry(dir), Date.now())
+  const registry = await loadRegistry(dir)
+  let entries
+  if (process.env.QUOTA_SOURCE === 'api') {
+    const res = await fetch('http://127.0.0.1:3425/v1/magpie/quotas?all=1')
+    entries = entriesFromApi((await res.json()).data || [])
+  } else {
+    entries = entriesFromCache(JSON.parse(await readFile(join(dir, 'quotas.json'), 'utf8')))
+  }
+  snapshot = buildSnapshot(entries, registry, Date.now())
 }
 
 sandbox.self.__magpieQuota(snapshot)

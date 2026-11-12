@@ -2,22 +2,26 @@
  * magpie 插件：积分总览（宿主侧）
  *
  * 页面沙盒（magpie.panels）只能读 usage:summary 与 providers:list，且 CSP 是
- * connect-src 'none'，拿不到「每个账号还剩多少额度」。而 magpie 自己已经把每次
- * auth.usage 的结果落在 `~/.config/magpie/quotas.json` 里（概览页卡片用的就是这
- * 份缓存）。所以由插件宿主（Bun，本文件）读这份文件、算出供应商级聚合，再原子
- * 写入 panel/live.js；面板用 <script src="live.js?v=…"> 取回（沙盒允许加载自己的
- * 脚本文件，不允许 fetch）。
+ * connect-src 'none'，拿不到「每个账号还剩多少额度」。所以由插件宿主（Bun，本文件）
+ * 读额度数据、算出供应商级聚合，再原子写入 panel/live.js；面板用
+ * <script src="live.js?v=…"> 取回（沙盒允许加载自己的脚本文件，不允许 fetch）。
+ *
+ * 数据来源（两个都读，接口优先）：
+ *   1. magpie 自己的实时额度接口 http://127.0.0.1:<port>/v1/magpie/quotas?all=1
+ *      —— 新鲜，带 remaining 百分比、holds.tokens（令牌额度）、余额文案。
+ *      ZCode 的令牌额度只在这里，quotas.json 缓存里根本没有它。
+ *   2. ~/.config/magpie/quotas.json —— magpie 的缓存，接口拿不到时兜底。
  *
  * 为什么供应商会「新加了却不显示」——两个原因，这里都处理掉：
  *
  * 1. 额度形态不止「积分」一种。各家 auth.usage 的 windows 里可能是
- *    limit/amount（计分窗口）、只有 balance（预付费钱包，没有总额）、只有
- *    used 百分比、或者只有一句 display 文案。旧版只留 credits 形态的窗口，
+ *    limit/amount（数量窗口）、只有 balance（预付费钱包）、只有百分比、
+ *    或者只有一句 display 文案。旧版只留 credits 形态的窗口，
  *    其余整条供应商被丢掉，于是余额型 / 百分比型 / 文案型 / 读失败的供应商
  *    永远不出现。现在四种形态都归一化上报，供应商本身永远不丢。
  *
- * 2. 供应商清单不能只看 quotas.json。刚在 magpie 里加上的供应商（或刚装了插件
- *    的、额度还没读到的），quotas.json 里根本没有条目，插件就完全不知道它存在。
+ * 2. 供应商清单不能只看额度数据。刚在 magpie 里加上的供应商（或刚装了插件
+ *    的、额度还没读到的），数据里根本没有条目，插件就完全不知道它存在。
  *    所以这里再把 magpie 自己的供应商注册表合并进来：
  *      - plugin-providers.json：插件声明的供应商（name / signedIn / accounts）
  *      - providers.json：用户自己加的供应商
@@ -32,13 +36,15 @@ import { writeFile, rename, mkdir, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildSnapshot, loadRegistry, readJsonFile, SNAPSHOT_VERSION } from './core.mjs'
+import { buildSnapshot, loadRegistry, readJsonFile, entriesFromApi, entriesFromCache, SNAPSHOT_VERSION } from './core.mjs'
 
 const PANEL_DIR = join(dirname(fileURLToPath(import.meta.url)), 'panel')
 const LIVE_FILE = join(PANEL_DIR, 'live.js')
-const POLL_MS = 4000
+const POLL_MS = 8000
+const API_TIMEOUT_MS = 8000
 
 let configDir = ''
+let apiUrl = 'http://127.0.0.1:3425/v1/magpie/quotas?all=1'
 let timer = null
 let lastSignature = ''
 let latest = null
@@ -58,12 +64,45 @@ async function writtenVersion() {
   }
 }
 
+/** magpie 自己的接口端口在 gateway.json 里（默认 3425） */
+async function resolveApiUrl() {
+  const gateway = await readJsonFile('gateway.json', null, configDir)
+  const addr = typeof gateway?.addr === 'string' ? gateway.addr : ''
+  const port = addr.includes(':') ? Number(addr.split(':').pop()) : 0
+  if (port > 0) return `http://${addr}/v1/magpie/quotas?all=1`
+  return 'http://127.0.0.1:3425/v1/magpie/quotas?all=1'
+}
+
+/** 实时额度接口：magpie 自己算好的 auth.usage 结果 */
+async function fetchApiEntries() {
+  try {
+    const res = await fetch(apiUrl, { signal: AbortSignal.timeout(API_TIMEOUT_MS) })
+    if (!res.ok) return null
+    const body = await res.json()
+    const data = Array.isArray(body?.data) ? body.data : null
+    if (!data) return null
+    const entries = entriesFromApi(data)
+    return entries.length ? entries : null
+  } catch (err) {
+    // 接口不可用（magpie 没开、端口变了）时退回缓存
+    return null
+  }
+}
+
 async function publish() {
-  const raw = await readJsonFile('quotas.json', null, configDir)
-  if (!raw) return
+  let entries = await fetchApiEntries()
+  let source = 'api'
+
+  if (!entries) {
+    source = 'cache'
+    const raw = await readJsonFile('quotas.json', null, configDir)
+    if (!raw) return
+    entries = entriesFromCache(raw)
+    if (!entries.length) return
+  }
 
   const registry = await loadRegistry(configDir)
-  const snapshot = buildSnapshot(raw, registry, Date.now())
+  const snapshot = buildSnapshot(entries, registry, Date.now())
   const signature = JSON.stringify(snapshot)
   latest = snapshot
   if (signature === lastSignature) return
@@ -109,15 +148,16 @@ function resolveConfigDir(input) {
  */
 export default async function quotaGlance(input) {
   configDir = resolveConfigDir(input)
+  apiUrl = await resolveApiUrl()
   start()
   return {
     tool: {
       quota_snapshot: {
         description:
-          '当前各供应商的额度快照：每个供应商下所有账号的积分总量、已用、剩余、消耗百分比，3 天内到期的积分总量与到期时刻；余额型（预付费钱包）、百分比型、只有文案的供应商也在列表里，各自带上自己的口径。',
+          '当前各供应商的额度快照：每个供应商下所有账号的额度总量、已用、剩余、消耗百分比（积分、令牌等按单位分开），3 天内到期的额度总量与到期时刻；余额型（预付费钱包）、百分比型、只有文案的供应商也在列表里，各自带上自己的口径。',
         args: { type: 'object', properties: {} },
         execute: async () => {
-          if (!latest) return '还没有读到额度快照：magpie 的 quotas.json 尚未生成，稍后再试。'
+          if (!latest) return '还没有读到额度快照：magpie 的额度接口或 quotas.json 都还没给出数据，稍后再试。'
           return JSON.stringify(latest, null, 2)
         },
       },

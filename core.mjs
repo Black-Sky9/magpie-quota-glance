@@ -1,8 +1,14 @@
 /**
- * magpie-quota-glance 的纯逻辑：把 magpie 的额度缓存归一化成面板用的快照。
+ * magpie-quota-glance 的纯逻辑：把 magpie 的额度数据归一化成面板用的快照。
  *
  * 这个文件不作为插件入口加载（入口只有 index.mjs），所以可以自由导出函数，
  * 供自测脚本直接调用。
+ *
+ * 数据有两个来源，都归一化成同一种「账号条目」：
+ *   - magpie 自己的实时额度接口 /v1/magpie/quotas?all=1（主源：新鲜，
+ *     带 remaining 百分比、holds.tokens、余额文案；ZCode 的令牌额度只在这里）
+ *   - ~/.config/magpie/quotas.json（magpie 的缓存；接口拿不到时兜底，
+ *     它还带着 aside 标记，能指出哪些窗口是同一笔额度的拆分）
  *
  * 额度口径一共四种，任何一家供应商给什么都能显示：
  *   amount   —— 有 limit（>0）：按「数量 + 单位」计的额度（积分 credits / 令牌 tokens / 积分 / 点 …）
@@ -11,7 +17,8 @@
  *   text     —— 只有一句文案（例如「余额查询失败：…」），原样显示
  *
  * 关键约束：**不同单位不相加**。积分和令牌是两种计数，混在一起的总分没有意义，
- * 所以金额口径按单位分组（unit），余额也按单位分组，百分比也带单位。
+ * 所以数量口径按「单位 + 窗口名」分组（同一个供应商的 GLM-5.3 与 GLM-5.3-Flash
+ * 是两份额度，不该并成一份），余额与百分比也带单位。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -22,7 +29,7 @@ import { join } from 'node:path'
 export const EXPIRING_DAYS = 3
 
 /** 快照结构版本 */
-export const SNAPSHOT_VERSION = 3
+export const SNAPSHOT_VERSION = 4
 
 const DAY = 86_400_000
 
@@ -59,8 +66,30 @@ const UNIT_LABELS = {
   point: '点数',
 }
 
-export function unitLabel(unit) {
+/**
+ * 同义单位归一：credits 与「积分」是一回事，不归一的话面板上会出现
+ * 两张都叫「积分总量」的卡。令牌同理。
+ */
+const CANONICAL_UNITS = {
+  credits: 'credits',
+  credit: 'credits',
+  积分: 'credits',
+  tokens: 'tokens',
+  token: 'tokens',
+  令牌: 'tokens',
+  points: 'points',
+  point: 'points',
+  点: 'points',
+}
+
+export function canonicalUnit(unit) {
   const text = asText(unit).trim()
+  if (!text) return ''
+  return CANONICAL_UNITS[text.toLowerCase()] || CANONICAL_UNITS[text] || text
+}
+
+export function unitLabel(unit) {
+  const text = canonicalUnit(unit)
   if (!text) return '额度'
   return UNIT_LABELS[text.toLowerCase()] || text
 }
@@ -68,9 +97,21 @@ export function unitLabel(unit) {
 /** 这个单位是不是「令牌」——令牌和积分不能混着加 */
 export const isTokenUnit = (unit) => /token/i.test(asText(unit))
 
+/** 窗口名里带了通用说法时，不必再写进标题（「总积分」就叫积分） */
+const GENERIC_NAME = /积分|点数|余额|额度|用量|消费|消耗|credit|point|balance|quota|token/i
+
+/** 数量口径的分组标题：单位 + 窗口名（窗口名有信息量时才带） */
+export function groupLabel(unit, name) {
+  const base = unitLabel(unit)
+  const text = asText(name).trim()
+  if (!text) return base
+  if (GENERIC_NAME.test(text)) return base
+  return `${base}·${text}`
+}
+
 /**
  * 形如「5185.52 credits」「$0.00」「10,836 积分」「500 点 · Agent 1660 点 可用」
- * 「1,000,000 tokens」的余额文案，抽出数值与单位。
+ * 「1,200,000 tokens」的余额文案，抽出数值与单位。
  * 抽不出来（整句都是说明文字）时返回 null，由调用方当文案保留。
  */
 export function parseQuantity(text) {
@@ -92,6 +133,27 @@ export function parseQuantity(text) {
   return { amount: Math.max(0, amount), unit }
 }
 
+/**
+ * 从窗口的展示文案里找出单位：magpie 有时不给 unit 字段，
+ * 只在 display 末尾写「671 / 24,072 积分」。
+ */
+const KNOWN_UNITS = /^(积分|点数|点|元|余额|额度|令牌|次数|次|credits?|tokens?|points?|usd)$/i
+
+function unitFromDisplay(display) {
+  const source = asText(display)
+  // 「671 / 24,072 积分」这种：单位跟在「已用 / 总量」后面
+  const pair = /[\d.,]+\s*\/\s*[\d.,]+\s*([^\d\s/.,：:·|()（）]+)/.exec(source)
+  if (pair) {
+    const unit = pair[1].trim()
+    if (KNOWN_UNITS.test(unit)) return unit
+  }
+  const match = /([\d.,]+)\s*([^\d\s/.,：:·|()（）]+)\s*$/.exec(source)
+  if (!match) return ''
+  const unit = match[2].trim()
+  if (!KNOWN_UNITS.test(unit)) return ''
+  return unit
+}
+
 /** 一眼是「报错 / 说明」而不是读数的文案（例如「余额查询失败：接口超时」） */
 const MESSAGE_HINTS = ['失败', '错误', '超时', '异常', '不可用', '未开通', 'error', 'failed', 'timeout', 'timed out', 'denied', 'expired', 'undefined']
 
@@ -104,73 +166,158 @@ export function looksLikeMessage(text) {
   return MESSAGE_HINTS.some((hint) => lower.includes(hint))
 }
 
-/** 空的分档计数：1 天内 / 3 天内 / 7 天内 / 15 天内 / 15 天以上（合计 = 剩余积分） */
+/** 空的分档计数：1 天内 / 3 天内 / 7 天内 / 15 天内 / 15 天以上（合计 = 剩余额度） */
 const emptyBuckets = () => ({ d1: 0, d3: 0, d7: 0, d15: 0, later: 0 })
 
-/**
- * 把 quotas.json 的一个条目里的窗口归一化。
- *
- * spans[i].aside / windows[i].aside 表示「用掉它不影响账号可用」，只是总额的拆分
- * （「总积分」下面的「基础积分包」「赠送积分包」），所以不参与任何加总。
- */
-export function windowsOf(entry) {
-  const quota = entry?.quota && typeof entry.quota === 'object' ? entry.quota : {}
-  const spans = Array.isArray(entry?.spans) ? entry.spans : []
-  const raw = Array.isArray(quota.windows) ? quota.windows : []
-  const out = []
-
-  for (let i = 0; i < raw.length; i += 1) {
-    const w = raw[i]
-    if (!w || typeof w !== 'object') continue
-    const span = spans[i] && typeof spans[i] === 'object' ? spans[i] : {}
-
-    const hasLimit = w.limit !== undefined && w.limit !== null
-    const limit = Math.max(0, toNumber(w.limit))
-    const hasAmount = w.amount !== undefined && w.amount !== null
-    const amount = Math.max(0, toNumber(w.amount))
-    const balance = isNum(w.balance) ? Math.max(0, w.balance) : null
-    const hasUsed = w.used !== undefined && w.used !== null && w.used !== '' && Number.isFinite(Number(w.used))
-    const usedPct = hasUsed ? Math.max(0, toNumber(w.used)) : null
-    // 有的插件报「还剩百分之多少」，有的报「已用百分之多少」，两种都收
-    const remainingPct =
-      w.remaining !== undefined && w.remaining !== null && Number.isFinite(Number(w.remaining)) && Number(w.remaining) >= 0 && Number(w.remaining) <= 100
-        ? Number(w.remaining)
-        : null
-    const display = asText(w.display)
-    const unit = asText(w.unit)
-
-    let metric = 'none'
-    if (hasLimit && limit > 0) metric = 'amount'
-    else if (balance !== null) metric = 'balance'
-    else if (remainingPct !== null) metric = 'percent'
-    else if (usedPct !== null) metric = looksLikeMessage(display) ? 'text' : 'percent'
-    else if (display) metric = 'text'
-
-    // amount 是已用量的绝对值，used 是百分比；只有百分比时按 limit 折算
-    const used = metric === 'amount' ? Math.min(Math.max(hasAmount ? amount : ((usedPct ?? 0) / 100) * limit, 0), limit) : 0
-    // 百分比口径：剩余 = remaining（若给）或 100 − used
-    const left = metric === 'percent' ? (remainingPct !== null ? remainingPct : Math.max(0, 100 - (usedPct ?? 0))) : 0
-
-    out.push({
-      name: asText(w.name),
-      metric,
-      aside: w.aside === true || span.aside === true,
-      unit,
-      limit: metric === 'amount' ? limit : 0,
-      used,
-      remain: metric === 'amount' ? limit - used : 0,
-      balance,
-      usedPct,
-      remainingPct,
-      left,
-      display,
-      resetsAt: toTime(w.resetsAt),
-      runsOutAt: toTime(w.runsOutAt),
-      runsOut: Math.max(0, toNumber(w.runsOut)),
-    })
+/** 窗口的字段归一：缓存和接口两种来源的字段名不一样，这里统一 */
+function normWindow(w) {
+  const display = asText(w?.display)
+  const unit = canonicalUnit(asText(w?.unit) || unitFromDisplay(display))
+  return {
+    name: asText(w?.name),
+    limit: w?.limit === undefined || w?.limit === null ? null : Math.max(0, toNumber(w.limit)),
+    amount: w?.amount === undefined || w?.amount === null ? null : Math.max(0, toNumber(w.amount)),
+    unit,
+    used: w?.used === undefined || w?.used === null || w?.used === '' ? null : Math.max(0, toNumber(w.used)),
+    remaining: w?.remaining === undefined || w?.remaining === null ? null : toNumber(w.remaining),
+    balance: isNum(w?.balance) ? Math.max(0, w.balance) : null,
+    text: w?.text === true,
+    display,
+    resetsAt: toTime(w?.resetsAt),
+    runsOutAt: toTime(w?.runsOutAt),
+    runsOut: Math.max(0, toNumber(w?.runsOut)),
+    holds: w?.holds && typeof w.holds === 'object' ? w.holds : null,
+    aside: false,
   }
+}
 
-  return out
+/**
+ * 找出「同一笔额度的拆分窗口」并标成 aside。
+ *
+ * magpie 的缓存里带 aside 标记（CodeArts 的「总积分」下面挂着
+ * 「基础积分包」「赠送积分包」），但实时接口不带这个标记。
+ * 这里用它们的和关系还原：同一单位下，若最大窗口的上限正好等于其余窗口上限之和，
+ * 那么其余窗口就是它的拆分，只留最大的那个。
+ * 两份额度不同的窗口（例如 ZCode 的 GLM-5.3 与 GLM-5.3-Flash）不满足这个关系，照样都留。
+ */
+function markSplits(windows) {
+  const groups = new Map()
+  for (const w of windows) {
+    if (w.aside || !(w.limit > 0)) continue
+    const list = groups.get(w.unit) || []
+    list.push(w)
+    groups.set(w.unit, list)
+  }
+  for (const list of groups.values()) {
+    if (list.length < 3) continue
+    const biggest = list.reduce((a, b) => (b.limit > a.limit ? b : a))
+    const others = list.filter((w) => w !== biggest)
+    const sum = others.reduce((s, w) => s + w.limit, 0)
+    if (Math.abs(sum - biggest.limit) <= Math.max(1, biggest.limit * 0.005)) {
+      for (const w of others) w.aside = true
+    }
+  }
+}
+
+/** 一个账号条目（两个来源归一后的形状） */
+function makeEntry(raw) {
+  return {
+    key: raw.key,
+    provider: asText(raw.provider),
+    name: asText(raw.name),
+    plan: asText(raw.plan),
+    user: asText(raw.user),
+    alias: asText(raw.alias),
+    balance: asText(raw.balance),
+    error: asText(raw.error),
+    readAt: raw.readAt,
+    windows: raw.windows,
+  }
+}
+
+/** 从 magpie 的实时额度接口读来的条目 */
+export function entriesFromApi(data) {
+  const entries = []
+  for (const item of Array.isArray(data) ? data : []) {
+    const provider = asText(item?.provider)
+    if (!provider) continue
+    const user = asText(item?.user)
+    const windows = (Array.isArray(item?.windows) ? item.windows : []).map(normWindow)
+    entries.push(
+      makeEntry({
+        key: `${provider}/${user || entries.length}`,
+        provider,
+        name: asText(item?.name) || provider,
+        plan: asText(item?.plan),
+        user,
+        alias: asText(item?.alias),
+        balance: asText(item?.balance),
+        error: asText(item?.error),
+        readAt: toTime(item?.readAt),
+        windows,
+      }),
+    )
+  }
+  applyProviderUnits(entries)
+  for (const entry of entries) markSplits(entry.windows)
+  return entries
+}
+
+/** 从 magpie 的缓存（quotas.json）读来的条目 */
+export function entriesFromCache(raw) {
+  const entries = []
+  for (const [key, entry] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+    const quota = entry?.quota
+    if (!quota || typeof quota !== 'object') continue
+    const provider = asText(quota.provider) || asText(String(key).split('/')[0])
+    if (!provider) continue
+    const spans = Array.isArray(entry?.spans) ? entry.spans : []
+    const rawWindows = Array.isArray(quota.windows) ? quota.windows : []
+    const windows = rawWindows.map((w, i) => {
+      const span = spans[i] && typeof spans[i] === 'object' ? spans[i] : {}
+      const norm = normWindow(w)
+      norm.aside = w?.aside === true || span.aside === true
+      return norm
+    })
+    entries.push(
+      makeEntry({
+        key: String(key),
+        provider,
+        name: asText(quota.name) || provider,
+        plan: asText(quota.plan),
+        user: asText(quota.user),
+        alias: '',
+        balance: asText(quota.balance),
+        error: '',
+        readAt: toTime(quota.readAt || entry?.at),
+        windows,
+      }),
+    )
+  }
+  applyProviderUnits(entries)
+  return entries
+}
+
+/**
+ * 供应商级别的单位推断：ZCode 的窗口不给 unit，但窗口里带 holds.tokens
+ * （这一份额度是按令牌算的），同一个供应商的其它窗口也就都是令牌。
+ */
+function applyProviderUnits(entries) {
+  const providers = new Map()
+  for (const entry of entries) {
+    const list = providers.get(entry.provider) || []
+    list.push(entry)
+    providers.set(entry.provider, list)
+  }
+  for (const list of providers.values()) {
+    const tokenQuota = list.some((entry) => entry.windows.some((w) => w.holds && (isNum(w.holds.tokens) || (w.holds.routed && isNum(w.holds.routed.tokens)))))
+    if (!tokenQuota) continue
+    for (const entry of list) {
+      for (const w of entry.windows) {
+        if (!w.unit && w.limit > 0) w.unit = 'tokens'
+      }
+    }
+  }
 }
 
 /**
@@ -207,63 +354,78 @@ function addBuckets(target, source) {
   return target
 }
 
-/** 一个账号（quotas.json 的一个条目）的聚合 */
-export function accountOf(key, entry, now) {
-  const quota = entry?.quota && typeof entry.quota === 'object' ? entry.quota : {}
-  const windows = windowsOf(entry)
-
+/** 一个账号（一个条目）的聚合 */
+export function accountOf(entry, now) {
   const account = {
-    key: shortId(key),
-    user: asText(quota.user),
-    plan: asText(quota.plan),
-    readAt: toTime(quota.readAt || entry?.at),
+    key: shortId(entry.key),
+    user: entry.user,
+    alias: entry.alias,
+    plan: entry.plan,
+    readAt: entry.readAt,
     kind: 'none',
     known: false,
     units: [],
     percents: [],
     balances: [],
     notes: [],
-    balanceText: asText(quota.balance),
   }
 
-  // 金额口径按单位分组：积分和令牌各算各的
+  // 数量口径按「单位 + 窗口名」分组：积分和令牌各算各的，同一供应商的
+  // GLM-5.3 与 GLM-5.3-Flash 也是两份额度
   const unitMap = new Map()
-  const unitOf = (unit) => {
-    const key = asText(unit).trim()
-    let track = unitMap.get(key)
+  const unitOf = (w) => {
+    const id = `${w.unit}${w.name}`
+    let track = unitMap.get(id)
     if (!track) {
-      track = { unit: key, label: unitLabel(key), limit: 0, used: 0, remain: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0, windows: 0 }
-      unitMap.set(key, track)
+      track = {
+        id,
+        unit: w.unit,
+        name: w.name,
+        label: groupLabel(w.unit, w.name),
+        limit: 0,
+        used: 0,
+        remain: 0,
+        buckets: emptyBuckets(),
+        expiring: 0,
+        expiresAt: 0,
+        windows: 0,
+      }
+      unitMap.set(id, track)
     }
     return track
   }
 
-  for (const w of windows) {
+  for (const w of entry.windows) {
     // aside 只是总额的拆分：既不进合计，也不当额度线索展示
     if (w.aside) continue
 
-    if (w.metric === 'amount') {
-      const track = unitOf(w.unit)
-      track.limit += w.limit
-      track.used += w.used
-      track.remain += w.remain
+    const limit = w.limit ?? 0
+    if (limit > 0) {
+      const used = Math.min(Math.max(w.amount ?? ((w.used ?? 0) / 100) * limit, 0), limit)
+      const track = unitOf(w)
+      track.limit += limit
+      track.used += used
+      track.remain += limit - used
       track.windows += 1
-      const lapse = addToBuckets(track.buckets, w.remain, w, now)
+      const lapse = addToBuckets(track.buckets, limit - used, w, now)
       if (lapse.expiring) track.expiring += lapse.expiring
       if (lapse.expiresAt) track.expiresAt = track.expiresAt ? Math.min(track.expiresAt, lapse.expiresAt) : lapse.expiresAt
-    } else if (w.metric === 'balance') {
-      account.balances.push({ name: w.name, unit: w.unit, amount: w.balance })
-    } else if (w.metric === 'percent') {
-      account.percents.push({ name: w.name, unit: w.unit, used: 100 - w.left, left: w.left, resetsAt: w.resetsAt })
-    } else if (w.metric === 'text') {
+    } else if (w.balance !== null) {
+      account.balances.push({ name: w.name, unit: w.unit, label: unitLabel(w.unit), amount: w.balance })
+    } else if (w.text) {
+      account.notes.push({ name: w.name, text: w.display })
+    } else if (w.remaining !== null || w.used !== null) {
+      const left = w.remaining !== null ? Math.max(0, w.remaining) : Math.max(0, 100 - (w.used ?? 0))
+      account.percents.push({ name: w.name, unit: w.unit, used: 100 - left, left, resetsAt: w.resetsAt })
+    } else if (w.display) {
       account.notes.push({ name: w.name, text: w.display })
     }
   }
 
   // 条目级的 balance 文案：能拆成「数值 + 单位」就作为余额口径，
-  // 但若它正好等于某个金额窗口的剩余（MiniMax 的 "5185.52 credits" 就是 7000-1814.48），
+  // 但若它正好等于某个数量窗口的剩余（MiniMax 的 "5185.52 credits" 就是 7000-1814.48），
   // 说明只是同一个数的另一种说法，不能重复展示
-  const wallet = parseQuantity(account.balanceText)
+  const wallet = parseQuantity(entry.balance)
   const mirrors =
     wallet &&
     !account.balances.length &&
@@ -273,9 +435,14 @@ export function accountOf(key, entry, now) {
         Math.abs(wallet.amount - track.remain) <= Math.max(1, Math.abs(track.remain) * 0.005),
     )
   if (wallet && !account.balances.length && !mirrors) {
-    account.balances.push({ name: '钱包', unit: wallet.unit, amount: wallet.amount })
-  } else if (!wallet && account.balanceText && !account.notes.length) {
-    account.notes.push({ name: '余额', text: account.balanceText })
+    account.balances.push({ name: '钱包', unit: wallet.unit, label: unitLabel(wallet.unit), amount: wallet.amount })
+  } else if (!wallet && entry.balance && !account.notes.length) {
+    account.notes.push({ name: '余额', text: entry.balance })
+  }
+
+  // 读取失败之类的话，原样显示
+  if (entry.error && !account.notes.some((n) => n.text === entry.error)) {
+    account.notes.push({ name: '读取', text: entry.error })
   }
 
   account.units = [...unitMap.values()].map((track) => ({
@@ -343,9 +510,11 @@ export async function loadRegistry(dir) {
     const id = asText(item?.id)
     if (!id) continue
     const prev = map.get(id)
+    // 自己加的供应商，账号数看 accountProxies（键就是账号名）
+    const proxies = item?.accountProxies && typeof item.accountProxies === 'object' ? Object.keys(item.accountProxies).length : 0
     const accounts = Array.isArray(item.accounts)
       ? item.accounts.length
-      : Object.keys(item.accounts && typeof item.accounts === 'object' ? item.accounts : {}).length
+      : proxies || Object.keys(item.accounts && typeof item.accounts === 'object' ? item.accounts : {}).length
     map.set(id, {
       id,
       name: asText(item.name) || prev?.name || id,
@@ -362,11 +531,11 @@ export async function loadRegistry(dir) {
 /**
  * 造一份快照。
  *
- * @param raw      quotas.json 的内容
- * @param registry loadRegistry 得到的 Map（id → 供应商信息）
- * @param now      当前时刻（毫秒）
+ * @param entries   归一后的账号条目（entriesFromApi / entriesFromCache）
+ * @param registry  loadRegistry 得到的 Map（id → 供应商信息）
+ * @param now       当前时刻（毫秒）
  */
-export function buildSnapshot(raw, registry, now) {
+export function buildSnapshot(entries, registry, now) {
   const providers = new Map()
 
   const record = (id, name) => {
@@ -394,17 +563,11 @@ export function buildSnapshot(raw, registry, now) {
     return provider
   }
 
-  // 1) 额度：quotas.json 里 magpie 已经读到的每个账号
+  // 1) 额度：magpie 读到的每个账号
   let latestReadAt = 0
-  for (const [key, entry] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
-    const quota = entry?.quota
-    if (!quota || typeof quota !== 'object') continue
-
-    const id = asText(quota.provider) || asText(String(key).split('/')[0])
-    if (!id) continue
-
-    const account = accountOf(key, entry, now)
-    const provider = record(id, asText(quota.name))
+  for (const entry of entries || []) {
+    const provider = record(entry.provider, entry.name)
+    const account = accountOf(entry, now)
 
     provider.accounts += 1
     if (account.known) provider.known += 1
@@ -412,11 +575,10 @@ export function buildSnapshot(raw, registry, now) {
     if (account.readAt > provider.readAt) provider.readAt = account.readAt
     if (account.readAt > latestReadAt) latestReadAt = account.readAt
 
-    // 金额口径：按单位把各账号的窗口加总
     for (const track of account.units) {
-      let bucket = provider.units.find((u) => u.unit === track.unit)
+      let bucket = provider.units.find((u) => u.id === track.id)
       if (!bucket) {
-        bucket = { unit: track.unit, label: track.label, limit: 0, used: 0, remain: 0, usedPct: 0, accounts: 0, windows: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0 }
+        bucket = { ...track, limit: 0, used: 0, remain: 0, expiring: 0, expiresAt: 0, buckets: emptyBuckets(), accounts: 0 }
         provider.units.push(bucket)
       }
       bucket.limit += track.limit
@@ -430,17 +592,17 @@ export function buildSnapshot(raw, registry, now) {
     }
 
     // 百分比口径：同一个单位 + 窗口名，取最紧的一档
-    for (const pct of account.percents) {
-      let bucket = provider.percents.find((p) => p.unit === pct.unit && p.name === pct.name)
+    for (const percent of account.percents) {
+      let bucket = provider.percents.find((p) => p.unit === percent.unit && p.name === percent.name)
       if (!bucket) {
-        bucket = { unit: pct.unit, label: unitLabel(pct.unit), name: pct.name, used: pct.used, left: pct.left, resetsAt: pct.resetsAt, accounts: 0 }
+        bucket = { unit: percent.unit, label: unitLabel(percent.unit), name: percent.name, used: percent.used, left: percent.left, resetsAt: percent.resetsAt, accounts: 0 }
         provider.percents.push(bucket)
       }
       bucket.accounts += 1
-      if (pct.left < bucket.left) {
-        bucket.left = pct.left
-        bucket.used = pct.used
-        bucket.resetsAt = pct.resetsAt
+      if (percent.left < bucket.left) {
+        bucket.left = percent.left
+        bucket.used = percent.used
+        bucket.resetsAt = percent.resetsAt
       }
     }
 
@@ -469,9 +631,11 @@ export function buildSnapshot(raw, registry, now) {
       if (!entry.signedIn && entry.accounts === 0) continue
       const fresh = record(id, entry.name)
       fresh.accounts = Math.max(fresh.accounts, entry.accounts)
+      fresh.pending = true
       continue
     }
     if (!provider.accounts) provider.accounts = Math.max(provider.accounts, entry.accounts)
+    if (!provider.items.length) provider.pending = true
   }
 
   const list = [...providers.values()]
@@ -487,8 +651,8 @@ export function buildSnapshot(raw, registry, now) {
       provider.items.sort((a, b) => b.used - a.used || a.user.localeCompare(b.user))
       return provider
     })
-    .filter((provider) => provider.accounts > 0)
-    .sort((a, b) => b.units[0]?.limit - a.units[0]?.limit || b.accounts - a.accounts || a.name.localeCompare(b.name))
+    .filter((provider) => provider.accounts > 0 || provider.pending)
+    .sort((a, b) => (b.units[0]?.limit || 0) - (a.units[0]?.limit || 0) || b.accounts - a.accounts || a.name.localeCompare(b.name))
 
   const total = {
     providers: list.length,
@@ -508,9 +672,11 @@ export function buildSnapshot(raw, registry, now) {
     total.counts[p.kind] = (total.counts[p.kind] || 0) + 1
 
     for (const track of p.units) {
+      // 全站合计按单位分组：积分和令牌各一张卡；同一供应商的多个额度池
+      // （ZCode 的 GLM-5.3 与 GLM-5.3-Flash）在这里并进同一个单位
       let bucket = total.units.find((u) => u.unit === track.unit)
       if (!bucket) {
-        bucket = { unit: track.unit, label: track.label, limit: 0, used: 0, remain: 0, usedPct: 0, providers: 0, accounts: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0 }
+        bucket = { ...track, id: track.unit, name: '', label: unitLabel(track.unit), limit: 0, used: 0, remain: 0, usedPct: 0, expiring: 0, expiresAt: 0, buckets: emptyBuckets(), providers: 0, accounts: 0 }
         total.units.push(bucket)
       }
       bucket.limit += track.limit
@@ -523,18 +689,18 @@ export function buildSnapshot(raw, registry, now) {
       addBuckets(bucket.buckets, track.buckets)
     }
 
-    for (const pct of p.percents) {
-      let bucket = total.percents.find((x) => x.unit === pct.unit && x.name === pct.name)
+    for (const percent of p.percents) {
+      let bucket = total.percents.find((x) => x.unit === percent.unit && x.name === percent.name)
       if (!bucket) {
-        bucket = { unit: pct.unit, label: unitLabel(pct.unit), name: pct.name, used: pct.used, left: pct.left, resetsAt: pct.resetsAt, providers: 0, accounts: 0 }
+        bucket = { unit: percent.unit, label: unitLabel(percent.unit), name: percent.name, used: percent.used, left: percent.left, resetsAt: percent.resetsAt, providers: 0, accounts: 0 }
         total.percents.push(bucket)
       }
       bucket.providers += 1
-      bucket.accounts += pct.accounts
-      if (pct.left < bucket.left) {
-        bucket.left = pct.left
-        bucket.used = pct.used
-        bucket.resetsAt = pct.resetsAt
+      bucket.accounts += percent.accounts
+      if (percent.left < bucket.left) {
+        bucket.left = percent.left
+        bucket.used = percent.used
+        bucket.resetsAt = percent.resetsAt
       }
     }
 
@@ -553,8 +719,8 @@ export function buildSnapshot(raw, registry, now) {
   for (const track of total.units) track.usedPct = track.limit > 0 ? (track.used / track.limit) * 100 : 0
   total.percents.sort((a, b) => a.left - b.left)
 
-  // 「3 天内到期」用额度最大的那个单位（通常是积分）
-  const primary = total.units.slice().sort((a, b) => b.limit - a.limit)[0]
+  // 「3 天内到期」用额度最大的那个分组（通常是积分）
+  const primary = total.units.slice().sort((a, b) => (isTokenUnit(a.unit) === isTokenUnit(b.unit) ? b.limit - a.limit : isTokenUnit(a.unit) ? 1 : -1))[0]
   if (primary) {
     total.expiring = primary.expiring
     total.expiresAt = primary.expiresAt
