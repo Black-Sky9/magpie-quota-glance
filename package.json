@@ -1,12 +1,13 @@
 {
   "name": "magpie-quota-glance",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "description": "把每个供应商的积分使用详情和总览显示在底部板块，同时也标记了3天内过期的积分详情。",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
   "files": [
     "index.mjs",
+    "core.mjs",
     "icon.svg",
     "panel/quota.html",
     "panel/quota.css",
@@ -26,6 +27,9 @@
     "panel"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "node test/panel-smoke.mjs"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Black-Sky9/magpie-quota-glance.git"

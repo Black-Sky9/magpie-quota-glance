@@ -11,7 +11,7 @@
 
 ## 安装
 
-1. 解压 `magpie-quota-glance-0.1.1.zip`，得到一个 `magpie-quota-glance` 文件夹（放进任意固定目录，不要删）。
+1. 解压 `magpie-quota-glance-0.2.0.zip`，得到一个 `magpie-quota-glance` 文件夹（放进任意固定目录，不要删）。
 2. 在该文件夹的**上一级**打开终端，执行：
 
    ```
@@ -54,14 +54,24 @@ magpie plugin rm "<magpie-quota-glance 目录绝对路径>"
 插件宿主直接读 magpie 自己缓存的 `~/.config/magpie/quotas.json`（就是概览卡片渲染用的那份
 `auth.usage` 结果），在本地算好聚合后写进 `panel/live.js`，面板每 3 秒取一次。
 
-- **积分总量**：该供应商下各账号计分窗口的 `limit` 之和；只算总额窗口，跳过 `aside`
+供应商清单来自两个地方，一起合并：
+
+- `quotas.json`：magpie 已经读到的每个账号的额度（有数据）
+- `plugin-providers.json` / `providers.json`：magpie 认识的供应商（插件声明的 + 自己加的）
+
+所以**刚加的供应商几秒内就会出现在面板上**，哪怕它还没读到额度（显示「待读取」）。
+
+- **积分总量**：该供应商下各账号计分窗口 `limit` 之和；只算总额窗口，跳过 `aside`
   标记的拆分窗口（例如「总积分」下面的「基础积分包」「赠送积分包」），避免重复计数。
 - **已用 / 消耗%**：窗口的 `amount`（已用积分）之和，除以总量。
 - **3 天内到期**：窗口的 `runsOutAt`（积分批次作废时刻）落在未来 72 小时内时，取
   `min(runsOut, 剩余)`；没有 `runsOutAt` 但 `resetsAt`（周期重置）落在窗口内时，取剩余积分。
   `runsOutAt` 只是「按当前速度会用完」的预测，不计入到期。
+- **不是积分口径的额度**（预付费余额、百分比、只有文案）也显示，但标上「余额 / 百分比 /
+  文案」并且不计入总量，顶部有一行「不计入合计」把它们列出来。
 
 数据新鲜度跟随 magpie 自己的配额刷新节奏（设置里的「用量刷新间隔」，默认约 3 分钟）。
+卡片上的「读取于 X」表示这个供应商的数据有多旧。
 
 ## 常见问题
 
@@ -70,13 +80,15 @@ magpie plugin rm "<magpie-quota-glance 目录绝对路径>"
 | 面板显示「还没有收到积分数据」 | 插件宿主没跑起来，或本机还没有 `quotas.json`。先在应用里发一次对话/打开一次概览，再等几秒；仍不行就 `magpie plugin off/on`。 |
 | 数字和上方卡片对不上 | 卡片是即时值，面板取的是最近一次写入 `quotas.json` 的快照，最多差一个刷新周期。 |
 | 某个账号没算进合计 | 该账号的额度读取失败（例如 401、未订阅），窗口为空；供应商行会显示「N 个额度不可读」。 |
+| 新加的供应商不出现 | 面板每 4 秒读一次注册表，正常几秒内就会出现；若一直不出现，确认插件已 `on`，并 `magpie plugin off/on` 重启插件宿主。 |
+| 某个供应商只有「余额」「百分比」没有积分 | 那家供应商给的就是这种口径（预付费钱包 / 百分比额度），本来就没有可加总的积分，因此不计入总量，顶部「不计入合计」里有它。 |
 | 改了插件文件不生效 | `magpie plugin off <路径>` 再 `on`（会重启插件宿主）。 |
 
 ## 文件
 
 ```
 package.json     插件清单（magpie.panels / magpie.icon）
-index.mjs        宿主侧：读 quotas.json、算聚合、写 panel/live.js
+index.mjs        宿主侧：读 quotas.json 与供应商注册表、算聚合、写 panel/live.js
 panel/quota.html 面板页面
 panel/quota.css  面板样式（跟随 magpie 主题变量）
 panel/quota.js   面板渲染（标题图标为内联矢量，无外部请求）

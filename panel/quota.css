@@ -487,6 +487,99 @@ body {
   font-size: 12px;
 }
 
+/* ---------- 口径标记 ---------- */
+
+.kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  color: var(--q-muted);
+  background: var(--q-card);
+  border-color: var(--q-line);
+}
+
+.kind.balance {
+  color: #1f7a4a;
+  background: rgba(47, 158, 99, 0.12);
+  border-color: rgba(47, 158, 99, 0.28);
+}
+
+.kind.percent {
+  color: #8a6508;
+  background: rgba(242, 201, 76, 0.18);
+  border-color: rgba(201, 150, 18, 0.3);
+}
+
+.kind.text {
+  color: #a5551a;
+  background: rgba(224, 123, 47, 0.14);
+  border-color: rgba(224, 123, 47, 0.3);
+}
+
+.kind.none {
+  color: var(--q-warn);
+  background: var(--q-warn-soft);
+  border-color: transparent;
+}
+
+.kind.mixed {
+  color: var(--q-accent);
+  background: var(--magpie-accent-soft, rgba(60, 109, 240, 0.12));
+  border-color: transparent;
+}
+
+:root[data-theme='dark'] .kind.balance {
+  color: #7fe0a5;
+}
+
+:root[data-theme='dark'] .kind.percent {
+  color: #ffd76a;
+}
+
+:root[data-theme='dark'] .kind.text {
+  color: #ffb168;
+}
+
+/* ---------- 只有文案的额度 ---------- */
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--q-muted);
+}
+
+.note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: -4px 0 12px;
+}
+
+.note-row .note-label {
+  color: var(--q-muted);
+  font-size: 12px;
+}
+
+.provider.kind-none,
+.provider.kind-text {
+  border-style: dashed;
+}
+
 .provider .grow {
   flex: 1;
 }
@@ -609,6 +702,13 @@ details[open] summary::before {
 .account.unknown .val {
   color: var(--q-muted);
   font-style: italic;
+}
+
+.account .val.note-text {
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty {
