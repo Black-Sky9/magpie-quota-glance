@@ -11,3 +11,7 @@ Thumbs.db
 
 # 自测时落下的快照
 test/live-snapshot.json
+
+# 自测时落下的快照
+test/browser-snapshot.js
+test/live-snapshot.json
