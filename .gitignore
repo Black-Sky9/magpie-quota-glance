@@ -8,3 +8,6 @@ panel/live.js.tmp
 node_modules/
 .DS_Store
 Thumbs.db
+
+# 自测时落下的快照
+test/live-snapshot.json

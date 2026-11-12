@@ -22,6 +22,19 @@ class El {
     this.checked = false
     this.open = false
     this.type = ''
+    this.classList = {
+      add: (...names) => {
+        const set = new Set(this.className.split(' ').filter(Boolean))
+        for (const n of names) set.add(n)
+        this.className = [...set].join(' ')
+      },
+      remove: (...names) => {
+        const set = new Set(this.className.split(' ').filter(Boolean))
+        for (const n of names) set.delete(n)
+        this.className = [...set].join(' ')
+      },
+      contains: (name) => this.className.split(' ').includes(name),
+    }
   }
 
   set textContent(value) {
@@ -87,10 +100,11 @@ const panel = await readFile(join(here, '..', 'panel', 'quota.js'), 'utf8')
 vm.runInNewContext(panel, sandbox, { filename: 'quota.js' })
 
 let snapshot
-if (process.argv[2]) {
-  snapshot = JSON.parse(await readFile(process.argv[2], 'utf8'))
+const arg = process.argv[2]
+if (arg && arg.endsWith('.json')) {
+  snapshot = JSON.parse(await readFile(arg, 'utf8'))
 } else {
-  const dir = join(homedir(), '.config', 'magpie')
+  const dir = arg || join(homedir(), '.config', 'magpie')
   const raw = JSON.parse(await readFile(join(dir, 'quotas.json'), 'utf8'))
   snapshot = buildSnapshot(raw, await loadRegistry(dir), Date.now())
 }

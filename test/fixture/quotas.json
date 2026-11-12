@@ -1,0 +1,73 @@
+{
+  "tokuprovider/user-a": {
+    "at": "2026-11-12T10:00:00+08:00",
+    "quota": {
+      "provider": "tokuprovider",
+      "name": "Token 额度示例",
+      "user": "u-token",
+      "plan": "Team",
+      "windows": [
+        { "name": "本月令牌", "used": 25, "amount": 250000, "limit": 1000000, "unit": "tokens", "display": "250,000 / 1,000,000 tokens", "resetsAt": "2026-12-01T00:00:00Z" },
+        { "name": "本周令牌", "remaining": 40, "unit": "tokens", "display": "还剩 40% 令牌", "resetsAt": "2026-11-15T00:00:00Z" }
+      ],
+      "balance": "1,200,000 tokens",
+      "readAt": "2026-11-12T10:00:00+08:00"
+    },
+    "spans": [{}, {}]
+  },
+  "tokuprovider/user-b": {
+    "at": "2026-11-12T10:00:01+08:00",
+    "quota": {
+      "provider": "tokuprovider",
+      "name": "Token 额度示例",
+      "user": "u-token-2",
+      "windows": [
+        { "name": "本月令牌", "used": 40, "amount": 400000, "limit": 1000000, "unit": "tokens", "display": "400,000 / 1,000,000 tokens" }
+      ],
+      "readAt": "2026-11-12T10:00:01+08:00"
+    }
+  },
+  "mixedprovider/user-c": {
+    "at": "2026-11-12T10:00:02+08:00",
+    "quota": {
+      "provider": "mixedprovider",
+      "name": "混合口径示例",
+      "user": "u-mixed",
+      "windows": [
+        { "name": "积分", "used": 10, "amount": 500, "limit": 5000, "unit": "credits", "display": "500 / 5,000 credits" },
+        { "name": "令牌", "used": 5, "amount": 5000, "limit": 100000, "unit": "tokens", "display": "5,000 / 100,000 tokens" }
+      ],
+      "readAt": "2026-11-12T10:00:02+08:00"
+    }
+  },
+  "textonly/user-d": {
+    "at": "2026-11-12T10:00:03+08:00",
+    "quota": {
+      "provider": "textonly",
+      "name": "只有文案示例",
+      "user": "u-text",
+      "windows": [{ "name": "余额", "used": 0, "display": "余额查询失败：平台接口请求失败：The operation timed out." }],
+      "readAt": "2026-11-12T10:00:03+08:00"
+    }
+  },
+  "walletprovider/user-e": {
+    "at": "2026-11-12T10:00:04+08:00",
+    "quota": {
+      "provider": "walletprovider",
+      "name": "钱包示例",
+      "user": "u-wallet",
+      "windows": [{ "name": "钱包", "used": 0, "balance": 1200, "unit": "tokens", "display": "1,200 tokens" }],
+      "readAt": "2026-11-12T10:00:04+08:00"
+    }
+  },
+  "percentprovider/user-f": {
+    "at": "2026-11-12T10:00:05+08:00",
+    "quota": {
+      "provider": "percentprovider",
+      "name": "百分比示例",
+      "user": "u-percent",
+      "windows": [{ "name": "5 小时窗口", "used": 60, "display": "已用 60%", "resetsAt": "2026-11-12T12:00:00Z" }],
+      "readAt": "2026-11-12T10:00:05+08:00"
+    }
+  }
+}

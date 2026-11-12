@@ -28,11 +28,11 @@
  * 纯逻辑都放在 core.mjs 里，它不是入口文件。
  */
 
-import { writeFile, rename, mkdir } from 'node:fs/promises'
+import { writeFile, rename, mkdir, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildSnapshot, loadRegistry, readJsonFile } from './core.mjs'
+import { buildSnapshot, loadRegistry, readJsonFile, SNAPSHOT_VERSION } from './core.mjs'
 
 const PANEL_DIR = join(dirname(fileURLToPath(import.meta.url)), 'panel')
 const LIVE_FILE = join(PANEL_DIR, 'live.js')
@@ -43,6 +43,21 @@ let timer = null
 let lastSignature = ''
 let latest = null
 
+/**
+ * magpie 偶尔会留下一个没退干净的旧插件宿主进程，它和新进程一起往 live.js 写，
+ * 于是旧代码会把新代码的快照盖掉。live.js 里带着快照版本号，
+ * 谁版本新谁写，旧版本不写。
+ */
+async function writtenVersion() {
+  try {
+    const text = await readFile(LIVE_FILE, 'utf8')
+    const match = /"v":(\d+)/.exec(text)
+    return match ? Number(match[1]) : 0
+  } catch {
+    return 0
+  }
+}
+
 async function publish() {
   const raw = await readJsonFile('quotas.json', null, configDir)
   if (!raw) return
@@ -52,6 +67,8 @@ async function publish() {
   const signature = JSON.stringify(snapshot)
   latest = snapshot
   if (signature === lastSignature) return
+
+  if ((await writtenVersion()) > SNAPSHOT_VERSION) return
 
   const body = `self.__magpieQuota && self.__magpieQuota(${signature});\n`
   await mkdir(PANEL_DIR, { recursive: true })

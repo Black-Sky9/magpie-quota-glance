@@ -593,6 +593,26 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 一个金额口径（积分 / 令牌 / …）自成一组 */
+.provider .unit {
+  margin-top: 10px;
+}
+
+.provider .unit + .unit {
+  padding-top: 8px;
+  border-top: 1px dashed var(--q-line);
+}
+
+.provider .unit-label {
+  color: var(--q-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.buckets.inline {
+  margin-top: 6px;
+}
+
 .provider .nums .kv {
   display: inline-flex;
   align-items: baseline;

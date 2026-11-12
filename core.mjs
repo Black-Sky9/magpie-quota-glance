@@ -3,6 +3,15 @@
  *
  * 这个文件不作为插件入口加载（入口只有 index.mjs），所以可以自由导出函数，
  * 供自测脚本直接调用。
+ *
+ * 额度口径一共四种，任何一家供应商给什么都能显示：
+ *   amount   —— 有 limit（>0）：按「数量 + 单位」计的额度（积分 credits / 令牌 tokens / 积分 / 点 …）
+ *   percent  —— 只有百分比：窗口报 used（已用百分比）或 remaining（剩余百分比）
+ *   balance  —— 只有余额：预付费钱包，钱包里剩多少
+ *   text     —— 只有一句文案（例如「余额查询失败：…」），原样显示
+ *
+ * 关键约束：**不同单位不相加**。积分和令牌是两种计数，混在一起的总分没有意义，
+ * 所以金额口径按单位分组（unit），余额也按单位分组，百分比也带单位。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -13,7 +22,7 @@ import { join } from 'node:path'
 export const EXPIRING_DAYS = 3
 
 /** 快照结构版本 */
-export const SNAPSHOT_VERSION = 2
+export const SNAPSHOT_VERSION = 3
 
 const DAY = 86_400_000
 
@@ -40,9 +49,28 @@ export const shortId = (value) => createHash('sha256').update(String(value)).dig
 
 const BUCKET_DAYS = { d1: 1, d3: 3, d7: 7, d15: 15 }
 
+/** 单位的中文名：面板上写「积分总量」还是「令牌总量」 */
+const UNIT_LABELS = {
+  credits: '积分',
+  credit: '积分',
+  tokens: '令牌',
+  token: '令牌',
+  points: '点数',
+  point: '点数',
+}
+
+export function unitLabel(unit) {
+  const text = asText(unit).trim()
+  if (!text) return '额度'
+  return UNIT_LABELS[text.toLowerCase()] || text
+}
+
+/** 这个单位是不是「令牌」——令牌和积分不能混着加 */
+export const isTokenUnit = (unit) => /token/i.test(asText(unit))
+
 /**
- * 形如「5185.52 credits」「$0.00」「10,836 积分」「500 点 · Agent 1660 点 可用」的
- * 一句话余额（auth.usage 的 balance 字段就是这种文案），抽出数值与单位。
+ * 形如「5185.52 credits」「$0.00」「10,836 积分」「500 点 · Agent 1660 点 可用」
+ * 「1,000,000 tokens」的余额文案，抽出数值与单位。
  * 抽不出来（整句都是说明文字）时返回 null，由调用方当文案保留。
  */
 export function parseQuantity(text) {
@@ -82,13 +110,6 @@ const emptyBuckets = () => ({ d1: 0, d3: 0, d7: 0, d15: 0, later: 0 })
 /**
  * 把 quotas.json 的一个条目里的窗口归一化。
  *
- * 形态判定顺序（先到先得，因为同一个窗口不会同时是两种）：
- *   credit  —— 有 limit > 0：这个窗口有总额，能算「已用 / 剩余 / 消耗%」
- *   balance —— 有数值 balance：预付费钱包，只有余额没有总额
- *   percent —— 有数值 used：百分比口径（used 是已用百分比，可能超过 100）
- *   text    —— 只有 display 文案（例如「余额查询失败：…」）
- *   none    —— 什么都没有
- *
  * spans[i].aside / windows[i].aside 表示「用掉它不影响账号可用」，只是总额的拆分
  * （「总积分」下面的「基础积分包」「赠送积分包」），所以不参与任何加总。
  */
@@ -108,28 +129,40 @@ export function windowsOf(entry) {
     const hasAmount = w.amount !== undefined && w.amount !== null
     const amount = Math.max(0, toNumber(w.amount))
     const balance = isNum(w.balance) ? Math.max(0, w.balance) : null
-    const usedPct = w.used === undefined || w.used === null || w.used === '' ? null : Math.max(0, toNumber(w.used))
+    const hasUsed = w.used !== undefined && w.used !== null && w.used !== '' && Number.isFinite(Number(w.used))
+    const usedPct = hasUsed ? Math.max(0, toNumber(w.used)) : null
+    // 有的插件报「还剩百分之多少」，有的报「已用百分之多少」，两种都收
+    const remainingPct =
+      w.remaining !== undefined && w.remaining !== null && Number.isFinite(Number(w.remaining)) && Number(w.remaining) >= 0 && Number(w.remaining) <= 100
+        ? Number(w.remaining)
+        : null
     const display = asText(w.display)
+    const unit = asText(w.unit)
 
-    let kind = 'none'
-    if (hasLimit && limit > 0) kind = 'credit'
-    else if (balance !== null) kind = 'balance'
-    else if (usedPct !== null) kind = looksLikeMessage(display) ? 'text' : 'percent'
-    else if (display) kind = 'text'
+    let metric = 'none'
+    if (hasLimit && limit > 0) metric = 'amount'
+    else if (balance !== null) metric = 'balance'
+    else if (remainingPct !== null) metric = 'percent'
+    else if (usedPct !== null) metric = looksLikeMessage(display) ? 'text' : 'percent'
+    else if (display) metric = 'text'
 
     // amount 是已用量的绝对值，used 是百分比；只有百分比时按 limit 折算
-    const used = kind === 'credit' ? Math.min(Math.max(hasAmount ? amount : ((usedPct ?? 0) / 100) * limit, 0), limit) : 0
+    const used = metric === 'amount' ? Math.min(Math.max(hasAmount ? amount : ((usedPct ?? 0) / 100) * limit, 0), limit) : 0
+    // 百分比口径：剩余 = remaining（若给）或 100 − used
+    const left = metric === 'percent' ? (remainingPct !== null ? remainingPct : Math.max(0, 100 - (usedPct ?? 0))) : 0
 
     out.push({
       name: asText(w.name),
-      kind,
+      metric,
       aside: w.aside === true || span.aside === true,
-      unit: asText(w.unit),
-      limit: kind === 'credit' ? limit : 0,
+      unit,
+      limit: metric === 'amount' ? limit : 0,
       used,
-      remain: kind === 'credit' ? limit - used : 0,
+      remain: metric === 'amount' ? limit - used : 0,
       balance,
       usedPct,
+      remainingPct,
+      left,
       display,
       resetsAt: toTime(w.resetsAt),
       runsOutAt: toTime(w.runsOutAt),
@@ -141,9 +174,9 @@ export function windowsOf(entry) {
 }
 
 /**
- * 把某个窗口的剩余积分按到期紧迫程度归到一档。
+ * 把某个窗口的剩余额度按到期紧迫程度归到一档。
  * magpie 只给得出「最快作废的那批」的时刻（runsOutAt/laps）与周期重置时刻（resetsAt），
- * 剩下的积分没有更细的到期信息，因此归入「15 天以上」，保证各档之和恒等于剩余积分。
+ * 剩下的额度没有更细的到期信息，因此归入「15 天以上」，保证各档之和恒等于剩余额度。
  */
 function addToBuckets(buckets, remain, window, now) {
   if (!(remain > 0)) return { expiring: 0, expiresAt: 0 }
@@ -174,17 +207,6 @@ function addBuckets(target, source) {
   return target
 }
 
-/** 余额按「单位」分桶：积分、点、$ 不能相加 */
-function addBalance(list, unit, amount) {
-  const found = list.find((item) => item.unit === unit)
-  if (found) {
-    found.amount += amount
-    found.accounts += 1
-  } else {
-    list.push({ unit, amount, accounts: 1 })
-  }
-}
-
 /** 一个账号（quotas.json 的一个条目）的聚合 */
 export function accountOf(key, entry, now) {
   const quota = entry?.quota && typeof entry.quota === 'object' ? entry.quota : {}
@@ -197,68 +219,87 @@ export function accountOf(key, entry, now) {
     readAt: toTime(quota.readAt || entry?.at),
     kind: 'none',
     known: false,
-    credit: false,
-    limit: 0,
-    used: 0,
-    remain: 0,
-    usedPct: 0,
-    expiring: 0,
-    expiresAt: 0,
-    buckets: emptyBuckets(),
-    balances: [],
+    units: [],
     percents: [],
+    balances: [],
     notes: [],
     balanceText: asText(quota.balance),
+  }
+
+  // 金额口径按单位分组：积分和令牌各算各的
+  const unitMap = new Map()
+  const unitOf = (unit) => {
+    const key = asText(unit).trim()
+    let track = unitMap.get(key)
+    if (!track) {
+      track = { unit: key, label: unitLabel(key), limit: 0, used: 0, remain: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0, windows: 0 }
+      unitMap.set(key, track)
+    }
+    return track
   }
 
   for (const w of windows) {
     // aside 只是总额的拆分：既不进合计，也不当额度线索展示
     if (w.aside) continue
 
-    if (w.kind === 'credit') {
-      account.credit = true
-      account.limit += w.limit
-      account.used += w.used
-      account.remain += w.remain
-      const lapse = addToBuckets(account.buckets, w.remain, w, now)
-      if (lapse.expiring) account.expiring += lapse.expiring
-      if (lapse.expiresAt) account.expiresAt = account.expiresAt ? Math.min(account.expiresAt, lapse.expiresAt) : lapse.expiresAt
-    } else if (w.kind === 'balance') {
+    if (w.metric === 'amount') {
+      const track = unitOf(w.unit)
+      track.limit += w.limit
+      track.used += w.used
+      track.remain += w.remain
+      track.windows += 1
+      const lapse = addToBuckets(track.buckets, w.remain, w, now)
+      if (lapse.expiring) track.expiring += lapse.expiring
+      if (lapse.expiresAt) track.expiresAt = track.expiresAt ? Math.min(track.expiresAt, lapse.expiresAt) : lapse.expiresAt
+    } else if (w.metric === 'balance') {
       account.balances.push({ name: w.name, unit: w.unit, amount: w.balance })
-    } else if (w.kind === 'percent') {
-      account.percents.push({ name: w.name, used: w.usedPct, left: Math.max(0, 100 - w.usedPct), resetsAt: w.resetsAt })
-    } else if (w.kind === 'text') {
+    } else if (w.metric === 'percent') {
+      account.percents.push({ name: w.name, unit: w.unit, used: 100 - w.left, left: w.left, resetsAt: w.resetsAt })
+    } else if (w.metric === 'text') {
       account.notes.push({ name: w.name, text: w.display })
     }
   }
 
   // 条目级的 balance 文案：能拆成「数值 + 单位」就作为余额口径，
-  // 但若它正好等于计分窗口的剩余（MiniMax 的 "5185.52 credits" 就是 7000-1814.48），
+  // 但若它正好等于某个金额窗口的剩余（MiniMax 的 "5185.52 credits" 就是 7000-1814.48），
   // 说明只是同一个数的另一种说法，不能重复展示
   const wallet = parseQuantity(account.balanceText)
-  // 容差取 1 或 0.5%：magpie 那边是四舍五入过的两位数，5185.52 / 4000.00 这种差 0.01
-  // 是同一笔钱，不是另一笔余额
-  const mirrorsCredit =
-    wallet && account.credit && !account.balances.length && Math.abs(wallet.amount - account.remain) <= Math.max(1, Math.abs(account.remain) * 0.005)
-  if (wallet && !account.balances.length && !mirrorsCredit) {
+  const mirrors =
+    wallet &&
+    !account.balances.length &&
+    [...unitMap.values()].some(
+      (track) =>
+        track.unit.toLowerCase() === wallet.unit.toLowerCase() &&
+        Math.abs(wallet.amount - track.remain) <= Math.max(1, Math.abs(track.remain) * 0.005),
+    )
+  if (wallet && !account.balances.length && !mirrors) {
     account.balances.push({ name: '钱包', unit: wallet.unit, amount: wallet.amount })
   } else if (!wallet && account.balanceText && !account.notes.length) {
     account.notes.push({ name: '余额', text: account.balanceText })
   }
 
-  account.known = account.credit || account.balances.length > 0 || account.percents.length > 0
-  account.usedPct = account.limit > 0 ? (account.used / account.limit) * 100 : 0
-  account.kind = account.credit
-    ? 'credit'
-    : account.balances.length
-      ? 'balance'
-      : account.percents.length
-        ? 'percent'
-        : account.notes.length
-          ? 'text'
-          : 'none'
+  account.units = [...unitMap.values()].map((track) => ({
+    ...track,
+    usedPct: track.limit > 0 ? (track.used / track.limit) * 100 : 0,
+  }))
+  account.known = account.units.length > 0 || account.balances.length > 0 || account.percents.length > 0
+  account.kind = accountKind(account)
 
   return account
+}
+
+/** 一个账号/供应商是哪种口径：积分 / 令牌 / 百分比 / 余额 / 文案 / 混合 / 未读 */
+export function accountKind(item) {
+  const kinds = new Set()
+  for (const track of item.units || []) {
+    if (track.limit > 0) kinds.add(isTokenUnit(track.unit) ? 'token' : 'credit')
+  }
+  if ((item.percents || []).length) kinds.add('percent')
+  if ((item.balances || []).length) kinds.add('balance')
+  if ((item.notes || []).length) kinds.add('text')
+  if (!kinds.size) return 'none'
+  if (kinds.size === 1) return [...kinds][0]
+  return 'mixed'
 }
 
 export async function readJsonFile(name, fallback, dir) {
@@ -337,17 +378,10 @@ export function buildSnapshot(raw, registry, now) {
         plans: [],
         accounts: 0,
         known: 0,
-        creditAccounts: 0,
         kind: 'none',
-        limit: 0,
-        used: 0,
-        remain: 0,
-        usedPct: 0,
-        expiring: 0,
-        expiresAt: 0,
-        buckets: emptyBuckets(),
-        balances: [],
+        units: [],
         percents: [],
+        balances: [],
         notes: [],
         readAt: 0,
         registered: registry.has(id),
@@ -374,21 +408,56 @@ export function buildSnapshot(raw, registry, now) {
 
     provider.accounts += 1
     if (account.known) provider.known += 1
-    if (account.credit) provider.creditAccounts += 1
-    provider.limit += account.limit
-    provider.used += account.used
-    provider.remain += account.remain
-    provider.expiring += account.expiring
-    if (account.expiresAt) provider.expiresAt = provider.expiresAt ? Math.min(provider.expiresAt, account.expiresAt) : account.expiresAt
-    addBuckets(provider.buckets, account.buckets)
-    for (const bal of account.balances) addBalance(provider.balances, bal.unit, bal.amount)
-    for (const pct of account.percents) provider.percents.push({ ...pct, key: account.key })
-    for (const note of account.notes) {
-      if (!provider.notes.some((n) => n.text === note.text)) provider.notes.push(note)
-    }
     if (account.plan && !provider.plans.includes(account.plan)) provider.plans.push(account.plan)
     if (account.readAt > provider.readAt) provider.readAt = account.readAt
     if (account.readAt > latestReadAt) latestReadAt = account.readAt
+
+    // 金额口径：按单位把各账号的窗口加总
+    for (const track of account.units) {
+      let bucket = provider.units.find((u) => u.unit === track.unit)
+      if (!bucket) {
+        bucket = { unit: track.unit, label: track.label, limit: 0, used: 0, remain: 0, usedPct: 0, accounts: 0, windows: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0 }
+        provider.units.push(bucket)
+      }
+      bucket.limit += track.limit
+      bucket.used += track.used
+      bucket.remain += track.remain
+      bucket.accounts += 1
+      bucket.windows += track.windows
+      bucket.expiring += track.expiring
+      if (track.expiresAt) bucket.expiresAt = bucket.expiresAt ? Math.min(bucket.expiresAt, track.expiresAt) : track.expiresAt
+      addBuckets(bucket.buckets, track.buckets)
+    }
+
+    // 百分比口径：同一个单位 + 窗口名，取最紧的一档
+    for (const pct of account.percents) {
+      let bucket = provider.percents.find((p) => p.unit === pct.unit && p.name === pct.name)
+      if (!bucket) {
+        bucket = { unit: pct.unit, label: unitLabel(pct.unit), name: pct.name, used: pct.used, left: pct.left, resetsAt: pct.resetsAt, accounts: 0 }
+        provider.percents.push(bucket)
+      }
+      bucket.accounts += 1
+      if (pct.left < bucket.left) {
+        bucket.left = pct.left
+        bucket.used = pct.used
+        bucket.resetsAt = pct.resetsAt
+      }
+    }
+
+    // 余额口径：按单位加总
+    for (const bal of account.balances) {
+      let bucket = provider.balances.find((b) => b.unit === bal.unit)
+      if (!bucket) {
+        bucket = { unit: bal.unit, label: unitLabel(bal.unit), amount: 0, accounts: 0 }
+        provider.balances.push(bucket)
+      }
+      bucket.amount += bal.amount
+      bucket.accounts += 1
+    }
+
+    for (const note of account.notes) {
+      if (!provider.notes.some((n) => n.text === note.text)) provider.notes.push(note)
+    }
 
     provider.items.push(account)
   }
@@ -407,58 +476,90 @@ export function buildSnapshot(raw, registry, now) {
 
   const list = [...providers.values()]
     .map((provider) => {
-      const kinds = new Set()
-      if (provider.limit > 0) kinds.add('credit')
-      if (provider.balances.length) kinds.add('balance')
-      if (provider.percents.length) kinds.add('percent')
-      if (provider.notes.length) kinds.add('text')
-      provider.kind = kinds.size === 0 ? 'none' : kinds.size > 1 ? 'mixed' : [...kinds][0]
-      provider.usedPct = provider.limit > 0 ? (provider.used / provider.limit) * 100 : 0
+      provider.kind = accountKind(provider)
+      for (const track of provider.units) track.usedPct = track.limit > 0 ? (track.used / track.limit) * 100 : 0
       provider.percents.sort((a, b) => a.left - b.left)
       provider.percents = provider.percents.slice(0, 4)
       // 文案只留最能说明问题的那几条：报错/说明在前，纯读数在后
       provider.notes.sort((a, b) => Number(looksLikeMessage(b.text)) - Number(looksLikeMessage(a.text)))
       provider.notes = provider.notes.slice(0, 3)
       provider.accounts = Math.max(provider.accounts, provider.items.length)
-      provider.items.sort((a, b) => b.used - a.used || b.limit - a.limit || a.user.localeCompare(b.user))
+      provider.items.sort((a, b) => b.used - a.used || a.user.localeCompare(b.user))
       return provider
     })
     .filter((provider) => provider.accounts > 0)
-    .sort((a, b) => b.limit - a.limit || b.accounts - a.accounts || a.name.localeCompare(b.name))
+    .sort((a, b) => b.units[0]?.limit - a.units[0]?.limit || b.accounts - a.accounts || a.name.localeCompare(b.name))
 
   const total = {
     providers: list.length,
     accounts: 0,
     known: 0,
-    creditAccounts: 0,
-    limit: 0,
-    used: 0,
-    remain: 0,
-    usedPct: 0,
+    units: [],
+    percents: [],
+    balances: [],
     expiring: 0,
     expiresAt: 0,
     buckets: emptyBuckets(),
-    balances: [],
-    counts: { credit: 0, balance: 0, percent: 0, text: 0, none: 0, mixed: 0 },
+    counts: { credit: 0, token: 0, percent: 0, balance: 0, text: 0, none: 0, mixed: 0 },
   }
   for (const p of list) {
     total.accounts += p.accounts
     total.known += p.known
-    total.creditAccounts += p.creditAccounts
-    total.limit += p.limit
-    total.used += p.used
-    total.remain += p.remain
-    total.expiring += p.expiring
-    if (p.expiresAt) total.expiresAt = total.expiresAt ? Math.min(total.expiresAt, p.expiresAt) : p.expiresAt
-    addBuckets(total.buckets, p.buckets)
     total.counts[p.kind] = (total.counts[p.kind] || 0) + 1
+
+    for (const track of p.units) {
+      let bucket = total.units.find((u) => u.unit === track.unit)
+      if (!bucket) {
+        bucket = { unit: track.unit, label: track.label, limit: 0, used: 0, remain: 0, usedPct: 0, providers: 0, accounts: 0, buckets: emptyBuckets(), expiring: 0, expiresAt: 0 }
+        total.units.push(bucket)
+      }
+      bucket.limit += track.limit
+      bucket.used += track.used
+      bucket.remain += track.remain
+      bucket.providers += 1
+      bucket.accounts += track.accounts
+      bucket.expiring += track.expiring
+      if (track.expiresAt) bucket.expiresAt = bucket.expiresAt ? Math.min(bucket.expiresAt, track.expiresAt) : track.expiresAt
+      addBuckets(bucket.buckets, track.buckets)
+    }
+
+    for (const pct of p.percents) {
+      let bucket = total.percents.find((x) => x.unit === pct.unit && x.name === pct.name)
+      if (!bucket) {
+        bucket = { unit: pct.unit, label: unitLabel(pct.unit), name: pct.name, used: pct.used, left: pct.left, resetsAt: pct.resetsAt, providers: 0, accounts: 0 }
+        total.percents.push(bucket)
+      }
+      bucket.providers += 1
+      bucket.accounts += pct.accounts
+      if (pct.left < bucket.left) {
+        bucket.left = pct.left
+        bucket.used = pct.used
+        bucket.resetsAt = pct.resetsAt
+      }
+    }
+
     for (const bal of p.balances) {
-      const found = total.balances.find((item) => item.unit === bal.unit)
-      if (found) found.amount += bal.amount
-      else total.balances.push({ unit: bal.unit, amount: bal.amount })
+      let bucket = total.balances.find((b) => b.unit === bal.unit)
+      if (!bucket) {
+        bucket = { unit: bal.unit, label: unitLabel(bal.unit), amount: 0, providers: 0, accounts: 0 }
+        total.balances.push(bucket)
+      }
+      bucket.amount += bal.amount
+      bucket.providers += 1
+      bucket.accounts += bal.accounts
     }
   }
-  total.usedPct = total.limit > 0 ? (total.used / total.limit) * 100 : 0
+
+  for (const track of total.units) track.usedPct = track.limit > 0 ? (track.used / track.limit) * 100 : 0
+  total.percents.sort((a, b) => a.left - b.left)
+
+  // 「3 天内到期」用额度最大的那个单位（通常是积分）
+  const primary = total.units.slice().sort((a, b) => b.limit - a.limit)[0]
+  if (primary) {
+    total.expiring = primary.expiring
+    total.expiresAt = primary.expiresAt
+    total.buckets = primary.buckets
+  }
 
   return { v: SNAPSHOT_VERSION, at: latestReadAt || now, days: EXPIRING_DAYS, total, providers: list }
 }
