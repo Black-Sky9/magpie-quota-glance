@@ -412,7 +412,8 @@ export function accountOf(entry, now) {
       if (lapse.expiresAt) track.expiresAt = track.expiresAt ? Math.min(track.expiresAt, lapse.expiresAt) : lapse.expiresAt
     } else if (w.balance !== null) {
       account.balances.push({ name: w.name, unit: w.unit, label: unitLabel(w.unit), amount: w.balance })
-    } else if (w.text) {
+    } else if (w.text || (w.display && looksLikeMessage(w.display))) {
+      // 报错、说明这类文案：原样显示，不当成百分比
       account.notes.push({ name: w.name, text: w.display })
     } else if (w.remaining !== null || w.used !== null) {
       const left = w.remaining !== null ? Math.max(0, w.remaining) : Math.max(0, 100 - (w.used ?? 0))
