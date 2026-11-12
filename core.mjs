@@ -29,7 +29,7 @@ import { join } from 'node:path'
 export const EXPIRING_DAYS = 3
 
 /** 快照结构版本 */
-export const SNAPSHOT_VERSION = 4
+export const SNAPSHOT_VERSION = 5
 
 const DAY = 86_400_000
 
@@ -450,6 +450,15 @@ export function accountOf(entry, now) {
     ...track,
     usedPct: track.limit > 0 ? (track.used / track.limit) * 100 : 0,
   }))
+  // 兼容旧版面板：它只认这些平铺字段（浏览器缓存了旧的 quota.js 时也能正确显示）
+  const legacy = account.units.find((u) => !isTokenUnit(u.unit)) || account.units[0]
+  account.limit = legacy ? legacy.limit : 0
+  account.used = legacy ? legacy.used : 0
+  account.remain = legacy ? legacy.remain : 0
+  account.usedPct = legacy ? legacy.usedPct : 0
+  account.expiring = legacy ? legacy.expiring : 0
+  account.expiresAt = legacy ? legacy.expiresAt : 0
+  account.buckets = legacy ? legacy.buckets : emptyBuckets()
   account.known = account.units.length > 0 || account.balances.length > 0 || account.percents.length > 0
   account.kind = accountKind(account)
 
@@ -650,6 +659,15 @@ export function buildSnapshot(entries, registry, now) {
       provider.notes = provider.notes.slice(0, 3)
       provider.accounts = Math.max(provider.accounts, provider.items.length)
       provider.items.sort((a, b) => b.used - a.used || a.user.localeCompare(b.user))
+      // 兼容旧版面板：它只认平铺的 limit/used/remain（积分那一组）
+      const legacy = provider.units.find((u) => !isTokenUnit(u.unit)) || provider.units[0]
+      provider.limit = legacy ? legacy.limit : 0
+      provider.used = legacy ? legacy.used : 0
+      provider.remain = legacy ? legacy.remain : 0
+      provider.usedPct = legacy ? legacy.usedPct : 0
+      provider.expiring = legacy ? legacy.expiring : 0
+      provider.expiresAt = legacy ? legacy.expiresAt : 0
+      provider.buckets = legacy ? legacy.buckets : emptyBuckets()
       return provider
     })
     .filter((provider) => provider.accounts > 0 || provider.pending)
@@ -726,6 +744,14 @@ export function buildSnapshot(entries, registry, now) {
     total.expiring = primary.expiring
     total.expiresAt = primary.expiresAt
     total.buckets = primary.buckets
+  }
+  // 兼容旧版面板：平铺字段取积分那一组
+  const credits = total.units.find((u) => !isTokenUnit(u.unit)) || total.units[0]
+  if (credits) {
+    total.limit = credits.limit
+    total.used = credits.used
+    total.remain = credits.remain
+    total.usedPct = credits.usedPct
   }
 
   return { v: SNAPSHOT_VERSION, at: latestReadAt || now, days: EXPIRING_DAYS, total, providers: list }
